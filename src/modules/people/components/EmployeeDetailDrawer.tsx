@@ -138,9 +138,18 @@ export function EmployeeDetailDrawer({
                 variant="outline"
                 size="sm"
                 leftIcon={<Printer className="w-3.5 h-3.5" />}
-                onClick={() => setShowIdCardModal(true)}
+                onClick={() => window.open(`/api/companies/${company.id}/employees/${employee.id}/id-card`, '_blank')}
               >
                 {t('people.action.generate_id_card')}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<FileText className="w-3.5 h-3.5" />}
+                onClick={() => window.open(`/api/companies/${company.id}/employees/${employee.id}/profile-pdf`, '_blank')}
+              >
+                {language === 'ar' ? 'تقرير ملف الموظف' : 'Export Profile PDF'}
               </Button>
 
               {onDelete && (

@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { boolean, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { boolean, integer, jsonb, numeric, pgTable, primaryKey, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
 
 /**
  * 1. Tenants / Companies Table
@@ -56,13 +56,19 @@ export const branches = pgTable('branches', {
 export const roles = pgTable('roles', {
   id: varchar('id', { length: 64 }).primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).references(() => tenants.id, { onDelete: 'cascade' }),
-  code: varchar('code', { length: 64 }).notNull(), // SUPER_ADMIN, COMPANY_ADMIN, FINANCE_MANAGER, HR_MANAGER, etc.
+  code: varchar('code', { length: 64 }).notNull(),
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar').notNull(),
   descriptionEn: text('description_en'),
   descriptionAr: text('description_ar'),
   isSystemRole: boolean('is_system_role').notNull().default(false),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: text('archived_by'),
 });
 
 /**
@@ -71,8 +77,9 @@ export const roles = pgTable('roles', {
  */
 export const permissions = pgTable('permissions', {
   id: varchar('id', { length: 64 }).primaryKey(),
-  code: varchar('code', { length: 64 }).notNull().unique(), // e.g. company.manage, users.manage, finance.post
+  code: varchar('code', { length: 64 }).notNull().unique(),
   module: varchar('module', { length: 32 }).notNull(),
+  resource: varchar('resource', { length: 32 }),
   action: varchar('action', { length: 32 }).notNull(),
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar').notNull(),
@@ -92,24 +99,114 @@ export const rolePermissions = pgTable('role_permissions', {
 
 /**
  * 6. Users Table
- * Strictly follows Cloud SQL + Firebase Auth specification.
- * `uid` is the Firebase Auth unique identifier (or desktop local UID).
+ * Immutable database numeric integer ID primary key.
  */
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   uid: text('uid').notNull().unique(),
+  username: varchar('username', { length: 64 }),
   email: text('email').notNull(),
+  phone: varchar('phone', { length: 32 }),
+  passwordHash: text('password_hash'),
   displayName: text('display_name'),
   role: varchar('role', { length: 32 }).notNull().default('VIEWER'),
   tenantId: varchar('tenant_id', { length: 64 }).references(() => tenants.id, { onDelete: 'set null' }),
+  defaultBranchId: varchar('default_branch_id', { length: 64 }).references(() => branches.id, { onDelete: 'set null' }),
+  employeeId: varchar('employee_id', { length: 64 }),
   preferredLanguage: varchar('preferred_language', { length: 2 }).notNull().default('en'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
+  failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  lastPasswordChangedAt: timestamp('last_password_changed_at', { withTimezone: true }),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  disabledBy: text('disabled_by'),
 });
 
 /**
- * 7. User Tenants Junction Table (Multi-Company Access)
+ * 7. User Roles Table
+ */
+export const userRoles = pgTable('user_roles', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  roleId: varchar('role_id', { length: 64 }).notNull().references(() => roles.id, { onDelete: 'cascade' }),
+  tenantId: varchar('tenant_id', { length: 64 }).references(() => tenants.id, { onDelete: 'cascade' }),
+});
+
+/**
+ * 8. User Company Access Table
+ */
+export const userCompanyAccess = pgTable('user_company_access', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  companyId: varchar('company_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  isDefault: boolean('is_default').notNull().default(false),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 9. User Branch Access Table
+ */
+export const userBranchAccess = pgTable('user_branch_access', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  companyId: varchar('company_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 10. User Data Scopes Table
+ */
+export const userDataScopes = pgTable('user_data_scopes', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  companyId: varchar('company_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  module: varchar('module', { length: 32 }).notNull(),
+  scope: varchar('scope', { length: 32 }).notNull().default('COMPANY'), // 'OWN', 'ASSIGNED', 'BRANCH', 'COMPANY', 'ALL_COMPANIES'
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 11. User Sessions Table
+ */
+export const userSessions = pgTable('user_sessions', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull(),
+  deviceInfo: text('device_info'),
+  ipAddress: text('ip_address'),
+  lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 12. Login Events Table
+ */
+export const loginEvents = pgTable('login_events', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+  username: text('username'),
+  isSuccess: boolean('is_success').notNull(),
+  failureReason: text('failure_reason'),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  timestamp: timestamp('timestamp', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * Legacy User Tenants Junction Table (Multi-Company Access compatibility)
  */
 export const userTenants = pgTable('user_tenants', {
   id: varchar('id', { length: 64 }).primaryKey(),
@@ -156,34 +253,280 @@ export const designations = pgTable('designations', {
 });
 
 /**
+  * 9a. Employee Categories Table
+  */
+export const employeeCategories = pgTable('employee_categories', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  descriptionEn: text('description_en'),
+  descriptionAr: text('description_ar'),
+  sortOrder: integer('sort_order').default(0),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: text('archived_by'),
+});
+
+/**
+  * 9b. Business Units Table
+  */
+export const businessUnits = pgTable('business_units', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  descriptionEn: text('description_en'),
+  descriptionAr: text('description_ar'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: text('archived_by'),
+});
+
+/**
+  * 9c. Cost Centers Table
+  */
+export const costCenters = pgTable('cost_centers', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  parentCostCenterId: varchar('parent_cost_center_id', { length: 64 }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  descriptionEn: text('description_en'),
+  descriptionAr: text('description_ar'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: text('archived_by'),
+});
+
+/**
+  * 9d. Fiscal Years Table
+  */
+export const fiscalYears = pgTable('fiscal_years', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 64 }).notNull(),
+  startDate: timestamp('start_date', { withTimezone: true }).notNull(),
+  endDate: timestamp('end_date', { withTimezone: true }).notNull(),
+  isCurrent: boolean('is_current').notNull().default(false),
+  isLocked: boolean('is_locked').notNull().default(false),
+  status: varchar('status', { length: 32 }).notNull().default('OPEN'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+  * 9e. Currencies Table (Reference & Company Master Data)
+  */
+export const currencies = pgTable('currencies', {
+  id: serial('id').primaryKey(),
+  isoCode: varchar('iso_code', { length: 3 }).notNull().unique(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  symbol: varchar('symbol', { length: 16 }).notNull(),
+  decimalPlaces: integer('decimal_places').notNull().default(2),
+  roundingMode: varchar('rounding_mode', { length: 32 }).notNull().default('HALF_EVEN'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+});
+
+/**
+  * 9f. Countries Table
+  */
+export const countries = pgTable('countries', {
+  id: serial('id').primaryKey(),
+  iso2: varchar('iso2', { length: 2 }).notNull().unique(),
+  iso3: varchar('iso3', { length: 3 }).notNull().unique(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  phoneCode: varchar('phone_code', { length: 16 }),
+  defaultCurrencyCode: varchar('default_currency_code', { length: 3 }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+});
+
+/**
+  * 9g. Nationalities Table
+  */
+export const nationalities = pgTable('nationalities', {
+  id: serial('id').primaryKey(),
+  code: varchar('code', { length: 32 }).notNull().unique(),
+  countryIso2: varchar('country_iso2', { length: 2 }),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+});
+
+/**
+  * 9h. Banks Table
+  */
+export const banks = pgTable('banks', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).references(() => tenants.id, { onDelete: 'cascade' }),
+  countryCode: varchar('country_code', { length: 2 }),
+  bankCode: varchar('bank_code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  swiftCode: varchar('swift_code', { length: 32 }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+  * 9i. Payment Methods Table
+  */
+export const paymentMethods = pgTable('payment_methods', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  paymentType: varchar('payment_type', { length: 32 }).notNull().default('BANK_TRANSFER'),
+  sortOrder: integer('sort_order').default(0),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+  * 9j. Document Types Table
+  */
+export const documentTypes = pgTable('document_types', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  entityScope: varchar('entity_scope', { length: 32 }).notNull().default('EMPLOYEE'),
+  requiresIssueDate: boolean('requires_issue_date').notNull().default(false),
+  requiresExpiryDate: boolean('requires_expiry_date').notNull().default(true),
+  requiresDocumentNumber: boolean('requires_document_number').notNull().default(true),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+  * 9k. Document Sequences (Numbering Engine) Table
+  */
+export const documentSequences = pgTable('document_sequences', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  documentType: varchar('document_type', { length: 64 }).notNull(),
+  prefix: varchar('prefix', { length: 32 }).notNull().default(''),
+  suffix: varchar('suffix', { length: 32 }).notNull().default(''),
+  separator: varchar('separator', { length: 8 }).notNull().default('-'),
+  includeYear: boolean('include_year').notNull().default(true),
+  includeMonth: boolean('include_month').notNull().default(false),
+  paddingLength: integer('padding_length').notNull().default(5),
+  nextNumber: integer('next_number').notNull().default(1),
+  resetPolicy: varchar('reset_policy', { length: 32 }).notNull().default('NEVER'),
+  fiscalYearId: varchar('fiscal_year_id', { length: 64 }).references(() => fiscalYears.id, { onDelete: 'set null' }),
+  branchId: varchar('branch_id', { length: 64 }).references(() => branches.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
  * 10. Employees Table (Authoritative Employee Master)
  * Single source of truth for all employment records in GulfHive.
  */
 export const employees = pgTable('employees', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
   departmentId: varchar('department_id', { length: 64 }).references(() => departments.id, { onDelete: 'set null' }),
   designationId: varchar('designation_id', { length: 64 }).references(() => designations.id, { onDelete: 'set null' }),
+  employeeCategoryId: varchar('employee_category_id', { length: 64 }).references(() => employeeCategories.id, { onDelete: 'set null' }),
+  businessUnitId: varchar('business_unit_id', { length: 64 }).references(() => businessUnits.id, { onDelete: 'set null' }),
+  costCenterId: varchar('cost_center_id', { length: 64 }).references(() => costCenters.id, { onDelete: 'set null' }),
+  nationalityId: integer('nationality_id').references(() => nationalities.id, { onDelete: 'set null' }),
+  managerEmployeeId: varchar('manager_employee_id', { length: 64 }),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
   employeeNumber: varchar('employee_number', { length: 32 }).notNull(),
   firstNameEn: text('first_name_en').notNull(),
+  middleNameEn: text('middle_name_en'),
   lastNameEn: text('last_name_en').notNull(),
   firstNameAr: text('first_name_ar').notNull(),
+  middleNameAr: text('middle_name_ar'),
   lastNameAr: text('last_name_ar').notNull(),
+  displayNameEn: text('display_name_en'),
+  displayNameAr: text('display_name_ar'),
   gender: varchar('gender', { length: 16 }).notNull(), // MALE, FEMALE
   dateOfBirth: timestamp('date_of_birth', { withTimezone: true }),
+  maritalStatus: varchar('marital_status', { length: 32 }).default('SINGLE'),
   nationality: varchar('nationality', { length: 64 }).notNull(),
   civilIdNumber: varchar('civil_id_number', { length: 32 }),
   passportNumber: varchar('passport_number', { length: 32 }),
+  workEmail: text('work_email'),
+  personalEmail: text('personal_email'),
+  workPhone: varchar('work_phone', { length: 32 }),
+  personalPhone: varchar('personal_phone', { length: 32 }),
   phone: varchar('phone', { length: 32 }),
   email: text('email').notNull(),
+  addressEn: text('address_en'),
+  addressAr: text('address_ar'),
   joiningDate: timestamp('joining_date', { withTimezone: true }).notNull(),
-  employmentStatus: varchar('employment_status', { length: 32 }).notNull().default('ACTIVE'), // PROBATION, ACTIVE, ON_LEAVE, RESIGNED, TERMINATED
-  contractType: varchar('contract_type', { length: 32 }).notNull().default('UNLIMITED'), // LIMITED, UNLIMITED, PROJECT_BASED
+  employmentStatus: varchar('employment_status', { length: 32 }).notNull().default('ACTIVE'), // DRAFT, ACTIVE, ON_LEAVE, SUSPENDED, INACTIVE, TERMINATED, ARCHIVED
+  contractType: varchar('contract_type', { length: 32 }).notNull().default('UNLIMITED'), // LIMITED, UNLIMITED, PROJECT_BASED, PART_TIME, TEMPORARY
   workLocation: text('work_location'),
   avatarUrl: text('avatar_url'),
+  photoPath: text('photo_path'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: text('archived_by'),
+});
+
+/**
+ * 10b. Employee Assignments Table
+ * Organizational position history and effective-dated transfers.
+ */
+export const employeeAssignments = pgTable('employee_assignments', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  departmentId: varchar('department_id', { length: 64 }).references(() => departments.id, { onDelete: 'set null' }),
+  designationId: varchar('designation_id', { length: 64 }).references(() => designations.id, { onDelete: 'set null' }),
+  employeeCategoryId: varchar('employee_category_id', { length: 64 }).references(() => employeeCategories.id, { onDelete: 'set null' }),
+  businessUnitId: varchar('business_unit_id', { length: 64 }).references(() => businessUnits.id, { onDelete: 'set null' }),
+  costCenterId: varchar('cost_center_id', { length: 64 }).references(() => costCenters.id, { onDelete: 'set null' }),
+  managerEmployeeId: varchar('manager_employee_id', { length: 64 }),
+  effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
+  effectiveTo: timestamp('effective_to', { withTimezone: true }),
+  reason: varchar('reason', { length: 64 }).notNull().default('JOINING'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
 });
 
 /**
@@ -198,12 +541,19 @@ export const employeeContracts = pgTable('employee_contracts', {
   contractType: varchar('contract_type', { length: 32 }).notNull().default('UNLIMITED'),
   startDate: timestamp('start_date', { withTimezone: true }).notNull(),
   endDate: timestamp('end_date', { withTimezone: true }),
+  probationStartDate: timestamp('probation_start_date', { withTimezone: true }),
+  probationEndDate: timestamp('probation_end_date', { withTimezone: true }),
   probationPeriodDays: integer('probation_period_days').default(90).notNull(),
   noticePeriodDays: integer('notice_period_days').default(90).notNull(),
-  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // ACTIVE, EXPIRED, TERMINATED
+  workingDaysPerWeek: integer('working_days_per_week').default(5),
+  workingHoursPerDay: integer('working_hours_per_day').default(8),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // ACTIVE, CLOSED, RENEWED, TERMINATED, EXPIRED
   terms: text('terms'),
+  documentAttachmentId: text('document_attachment_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
 });
 
 /**
@@ -218,10 +568,14 @@ export const employeeSalaries = pgTable('employee_salaries', {
   basicSalary: text('basic_salary').notNull(),
   housingAllowance: text('housing_allowance').default('0.000').notNull(),
   transportAllowance: text('transport_allowance').default('0.000').notNull(),
+  foodAllowance: text('food_allowance').default('0.000').notNull(),
   otherAllowances: text('other_allowances').default('0.000').notNull(),
   effectiveDate: timestamp('effective_date', { withTimezone: true }).notNull(),
+  effectiveTo: timestamp('effective_to', { withTimezone: true }),
   isActive: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
 });
 
 /**
@@ -232,13 +586,20 @@ export const employeeBankDetails = pgTable('employee_bank_details', {
   id: varchar('id', { length: 64 }).primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  bankId: varchar('bank_id', { length: 64 }).references(() => banks.id, { onDelete: 'set null' }),
   bankName: text('bank_name').notNull(),
   bankCode: varchar('bank_code', { length: 32 }), // WPS / Central Bank Routing Code
+  accountName: text('account_name'),
   iban: varchar('iban', { length: 64 }).notNull(),
   accountNumber: varchar('account_number', { length: 64 }).notNull(),
   swiftBic: varchar('swift_bic', { length: 32 }),
+  currency: varchar('currency', { length: 3 }).default('KWD'),
   isPrimary: boolean('is_primary').default(true).notNull(),
+  effectiveFrom: timestamp('effective_from', { withTimezone: true }).defaultNow(),
+  effectiveTo: timestamp('effective_to', { withTimezone: true }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
 });
 
 /**
@@ -249,6 +610,7 @@ export const employeeDocuments = pgTable('employee_documents', {
   id: varchar('id', { length: 64 }).primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  documentTypeId: varchar('document_type_id', { length: 64 }).references(() => documentTypes.id, { onDelete: 'set null' }),
   documentType: varchar('document_type', { length: 64 }).notNull(), // CIVIL_ID, PASSPORT, RESIDENCY_VISA, WORK_PERMIT, DRIVER_LICENSE, CONTRACT_COPY, DIPLOMA, OTHER
   documentNumber: varchar('document_number', { length: 64 }).notNull(),
   issueDate: timestamp('issue_date', { withTimezone: true }),
@@ -260,7 +622,43 @@ export const employeeDocuments = pgTable('employee_documents', {
   notes: text('notes'),
   status: varchar('status', { length: 32 }).notNull().default('VALID'), // VALID, EXPIRING_SOON, EXPIRED
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 14b. Employee Emergency Contacts Table
+ */
+export const employeeEmergencyContacts = pgTable('employee_emergency_contacts', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  relationship: varchar('relationship', { length: 32 }).notNull(),
+  phone: varchar('phone', { length: 32 }).notNull(),
+  alternatePhone: varchar('alternate_phone', { length: 32 }),
+  isPrimary: boolean('is_primary').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 14c. Employee Dependents Table
+ */
+export const employeeDependents = pgTable('employee_dependents', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  relationship: varchar('relationship', { length: 32 }).notNull(),
+  dateOfBirth: timestamp('date_of_birth', { withTimezone: true }),
+  nationalityId: integer('nationality_id').references(() => nationalities.id, { onDelete: 'set null' }),
+  documentNumber: varchar('document_number', { length: 64 }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
 });
 
 /**
@@ -330,26 +728,188 @@ export const schemaMigrations = pgTable('schema_migrations', {
 });
 
 /**
+ * 18b. Break Policies Table (Time Module)
+ */
+export const breakPolicies = pgTable('break_policies', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  breakType: varchar('break_type', { length: 32 }).notNull().default('UNPAID'), // PAID, UNPAID
+  durationMinutes: integer('duration_minutes').notNull().default(60),
+  calculationMethod: varchar('calculation_method', { length: 32 }).notNull().default('FIXED'), // FIXED, CLOCKED, AUTOMATIC_DEDUCTION
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
  * 19. Shifts Table (Time Module)
  */
 export const shifts = pgTable('shifts', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   code: varchar('code', { length: 32 }).notNull(), // DAY-01, NIGHT-01, SPLIT-01
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar').notNull(),
-  startTime: varchar('start_time', { length: 8 }).notNull(), // '08:00'
-  endTime: varchar('end_time', { length: 8 }).notNull(), // '16:00'
+  startTime: varchar('start_time', { length: 8 }).notNull(), // '08:00' or '20:00'
+  endTime: varchar('end_time', { length: 8 }).notNull(), // '16:00' or '04:00'
+  crossesMidnight: boolean('crosses_midnight').notNull().default(false),
+  scheduledMinutes: integer('scheduled_minutes').notNull().default(480),
+  breakPolicyId: varchar('break_policy_id', { length: 64 }).references(() => breakPolicies.id, { onDelete: 'set null' }),
   breakDurationMinutes: integer('break_duration_minutes').notNull().default(60),
   gracePeriodMinutes: integer('grace_period_minutes').notNull().default(15),
+  graceOutMinutes: integer('grace_out_minutes').notNull().default(15),
+  earlyInPolicy: varchar('early_in_policy', { length: 32 }).notNull().default('IGNORE'),
+  lateInPolicy: varchar('late_in_policy', { length: 32 }).notNull().default('DEDUCT_LATE'),
+  earlyOutPolicy: varchar('early_out_policy', { length: 32 }).notNull().default('DEDUCT_EARLY'),
   isOvernight: boolean('is_overnight').notNull().default(false),
   isActive: boolean('is_active').notNull().default(true),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  effectiveFrom: timestamp('effective_from', { withTimezone: true }).defaultNow(),
+  effectiveTo: timestamp('effective_to', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
 });
 
 /**
- * 20. Roster Assignments Table (Time Module)
+ * 19b. Work Schedules Table (Time Module)
+ */
+export const workSchedules = pgTable('work_schedules', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  scheduleType: varchar('schedule_type', { length: 32 }).notNull().default('REGULAR'), // REGULAR, FLEXIBLE, ROTATING, RAMADAN_OVERRIDE
+  weeklyHours: numeric('weekly_hours', { precision: 5, scale: 2 }).default('40.00'),
+  defaultShiftId: varchar('default_shift_id', { length: 64 }).references(() => shifts.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  effectiveFrom: timestamp('effective_from', { withTimezone: true }).defaultNow().notNull(),
+  effectiveTo: timestamp('effective_to', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: text('archived_by'),
+});
+
+/**
+ * 19c. Shift Patterns Table (Time Module)
+ */
+export const shiftPatterns = pgTable('shift_patterns', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  cycleLengthDays: integer('cycle_length_days').notNull().default(7),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 19d. Shift Pattern Days Table (Time Module)
+ */
+export const shiftPatternDays = pgTable('shift_pattern_days', {
+  id: serial('id').primaryKey(),
+  patternId: varchar('pattern_id', { length: 64 }).notNull().references(() => shiftPatterns.id, { onDelete: 'cascade' }),
+  sequenceDay: integer('sequence_day').notNull(), // 1 to cycle_length_days
+  shiftId: varchar('shift_id', { length: 64 }).references(() => shifts.id, { onDelete: 'set null' }),
+  isRestDay: boolean('is_rest_day').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 19e. Employee Schedule Assignments Table (Time Module)
+ */
+export const employeeScheduleAssignments = pgTable('employee_schedule_assignments', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  workScheduleId: varchar('work_schedule_id', { length: 64 }).references(() => workSchedules.id, { onDelete: 'set null' }),
+  shiftPatternId: varchar('shift_pattern_id', { length: 64 }).references(() => shiftPatterns.id, { onDelete: 'set null' }),
+  defaultShiftId: varchar('default_shift_id', { length: 64 }).references(() => shifts.id, { onDelete: 'set null' }),
+  effectiveFrom: timestamp('effective_from', { withTimezone: true }).defaultNow().notNull(),
+  effectiveTo: timestamp('effective_to', { withTimezone: true }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 19f. Schedule Overrides Table (Time Module: Ramadan / Seasonal)
+ */
+export const scheduleOverrides = pgTable('schedule_overrides', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  overrideType: varchar('override_type', { length: 32 }).notNull().default('RAMADAN'), // RAMADAN, SEASONAL, CLIENT_SPECIFIC, EMERGENCY
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(), // YYYY-MM-DD
+  effectiveTo: varchar('effective_to', { length: 10 }).notNull(), // YYYY-MM-DD
+  dailyHoursReductionMinutes: integer('daily_hours_reduction_minutes').notNull().default(120),
+  targetShiftId: varchar('target_shift_id', { length: 64 }).references(() => shifts.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 20. Authoritative Roster Entries Table (Time Module)
+ */
+export const rosterEntries = pgTable('roster_entries', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  workDate: varchar('work_date', { length: 10 }).notNull(), // YYYY-MM-DD
+  shiftId: varchar('shift_id', { length: 64 }).notNull().references(() => shifts.id, { onDelete: 'restrict' }),
+  branchId: varchar('branch_id', { length: 64 }).references(() => branches.id, { onDelete: 'set null' }),
+  projectId: varchar('project_id', { length: 64 }),
+  siteId: varchar('site_id', { length: 64 }),
+  clientId: varchar('client_id', { length: 64 }),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, PUBLISHED, CHANGED, CANCELLED
+  source: varchar('source', { length: 32 }).notNull().default('MANUAL'), // MANUAL, SCHEDULE_PATTERN, BULK_IMPORT
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+  publishedBy: text('published_by'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 20b. Roster Change History Table
+ */
+export const rosterChangeHistory = pgTable('roster_change_history', {
+  id: serial('id').primaryKey(),
+  rosterEntryId: varchar('roster_entry_id', { length: 64 }).notNull().references(() => rosterEntries.id, { onDelete: 'cascade' }),
+  oldShiftId: varchar('old_shift_id', { length: 64 }).references(() => shifts.id, { onDelete: 'set null' }),
+  newShiftId: varchar('new_shift_id', { length: 64 }).notNull().references(() => shifts.id, { onDelete: 'restrict' }),
+  changedBy: text('changed_by').notNull(),
+  changedAt: timestamp('changed_at', { withTimezone: true }).defaultNow().notNull(),
+  reason: text('reason').notNull(),
+});
+
+/**
+ * 20c. Roster Assignments Table (Legacy compatibility)
  */
 export const rosterAssignments = pgTable('roster_assignments', {
   id: varchar('id', { length: 64 }).primaryKey(),
@@ -364,7 +924,58 @@ export const rosterAssignments = pgTable('roster_assignments', {
 });
 
 /**
- * 21. Attendance Records Table (Time Module)
+ * 21. Clock Events Table (Immutable raw punch evidence)
+ */
+export const clockEvents = pgTable('clock_events', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  eventTimestamp: timestamp('event_timestamp', { withTimezone: true }).notNull(),
+  eventType: varchar('event_type', { length: 32 }).notNull(), // IN, OUT, BREAK_START, BREAK_END
+  source: varchar('source', { length: 32 }).notNull().default('MANUAL'), // MANUAL, EXCEL_IMPORT, BIOMETRIC, MOBILE, API, DESKTOP
+  deviceId: varchar('device_id', { length: 64 }),
+  branchId: varchar('branch_id', { length: 64 }).references(() => branches.id, { onDelete: 'set null' }),
+  siteId: varchar('site_id', { length: 64 }),
+  latitude: numeric('latitude', { precision: 10, scale: 7 }),
+  longitude: numeric('longitude', { precision: 10, scale: 7 }),
+  sourceReference: varchar('source_reference', { length: 128 }),
+  isDuplicate: boolean('is_duplicate').notNull().default(false),
+  receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 21b. Authoritative Attendance Days Table (Deterministic processed daily attendance)
+ */
+export const attendanceDays = pgTable('attendance_days', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  workDate: varchar('work_date', { length: 10 }).notNull(), // YYYY-MM-DD
+  rosterEntryId: varchar('roster_entry_id', { length: 64 }).references(() => rosterEntries.id, { onDelete: 'set null' }),
+  shiftId: varchar('shift_id', { length: 64 }).references(() => shifts.id, { onDelete: 'set null' }),
+  scheduledStart: timestamp('scheduled_start', { withTimezone: true }),
+  scheduledEnd: timestamp('scheduled_end', { withTimezone: true }),
+  actualFirstIn: timestamp('actual_first_in', { withTimezone: true }),
+  actualLastOut: timestamp('actual_last_out', { withTimezone: true }),
+  scheduledMinutes: integer('scheduled_minutes').notNull().default(0),
+  workedMinutes: integer('worked_minutes').notNull().default(0),
+  breakMinutes: integer('break_minutes').notNull().default(0),
+  lateMinutes: integer('late_minutes').notNull().default(0),
+  earlyLeaveMinutes: integer('early_leave_minutes').notNull().default(0),
+  overtimeCandidateMinutes: integer('overtime_candidate_minutes').notNull().default(0),
+  status: varchar('status', { length: 32 }).notNull().default('PRESENT'), // PRESENT, ABSENT, LATE, PARTIAL, REST_DAY, HOLIDAY, LEAVE, MISSING_PUNCH, NOT_SCHEDULED
+  processingVersion: integer('processing_version').notNull().default(1),
+  isLocked: boolean('is_locked').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 21c. Attendance Records Table (Legacy compatibility)
  */
 export const attendanceRecords = pgTable('attendance_records', {
   id: varchar('id', { length: 64 }).primaryKey(),
@@ -388,37 +999,92 @@ export const attendanceRecords = pgTable('attendance_records', {
 });
 
 /**
- * 22. Attendance Corrections Table (Time Module)
+ * 22. Attendance Exceptions Table (Time Module)
+ */
+export const attendanceExceptions = pgTable('attendance_exceptions', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  attendanceDayId: varchar('attendance_day_id', { length: 64 }).notNull().references(() => attendanceDays.id, { onDelete: 'cascade' }),
+  exceptionType: varchar('exception_type', { length: 32 }).notNull(), // MISSING_IN, MISSING_OUT, LATE_ARRIVAL, EARLY_DEPARTURE, UNEXPECTED_ABSENCE, UNEXPECTED_ATTENDANCE, EXCESSIVE_HOURS, OVERLAPPING_CLOCK, DUPLICATE_PUNCH, SCHEDULE_MISMATCH
+  severity: varchar('severity', { length: 16 }).notNull().default('MEDIUM'), // LOW, MEDIUM, HIGH, CRITICAL
+  status: varchar('status', { length: 32 }).notNull().default('OPEN'), // OPEN, UNDER_REVIEW, RESOLVED, IGNORED
+  description: text('description').notNull(),
+  detectedAt: timestamp('detected_at', { withTimezone: true }).defaultNow().notNull(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolvedBy: text('resolved_by'),
+  resolutionType: varchar('resolution_type', { length: 32 }), // CORRECTION_APPLIED, JUSTIFIED, WAIVED, DEDUCTION_CONFIRMED
+  notes: text('notes'),
+});
+
+/**
+ * 22b. Attendance Corrections Table (Time Module)
  */
 export const attendanceCorrections = pgTable('attendance_corrections', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
-  attendanceId: varchar('attendance_id', { length: 64 }).notNull().references(() => attendanceRecords.id, { onDelete: 'cascade' }),
+  attendanceId: varchar('attendance_id', { length: 64 }),
+  attendanceDayId: varchar('attendance_day_id', { length: 64 }).references(() => attendanceDays.id, { onDelete: 'cascade' }),
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
   requestedCheckIn: timestamp('requested_check_in', { withTimezone: true }),
   requestedCheckOut: timestamp('requested_check_out', { withTimezone: true }),
+  requestedFirstIn: timestamp('requested_first_in', { withTimezone: true }),
+  requestedLastOut: timestamp('requested_last_out', { withTimezone: true }),
   reason: text('reason').notNull(),
   status: varchar('status', { length: 32 }).notNull().default('PENDING'), // PENDING, APPROVED, REJECTED
+  requestedBy: text('requested_by'),
+  requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow(),
   reviewedBy: text('reviewed_by'),
   reviewNotes: text('review_notes'),
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  approvedBy: text('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  rejectedBy: text('rejected_by'),
+  rejectedAt: timestamp('rejected_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /**
- * 23. Public Holidays Table (Time Module)
+ * 23. Holiday Calendars Table (Time Module)
+ */
+export const holidayCalendars = pgTable('holiday_calendars', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  countryId: integer('country_id').references(() => countries.id, { onDelete: 'set null' }),
+  branchId: varchar('branch_id', { length: 64 }).references(() => branches.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 23b. Public Holidays Table (Time Module)
  */
 export const holidays = pgTable('holidays', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
-  countryCode: varchar('country_code', { length: 2 }).notNull(),
+  holidayCalendarId: varchar('holiday_calendar_id', { length: 64 }).references(() => holidayCalendars.id, { onDelete: 'set null' }),
+  countryCode: varchar('country_code', { length: 2 }),
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar').notNull(),
-  startDate: timestamp('start_date', { withTimezone: true }).notNull(),
-  endDate: timestamp('end_date', { withTimezone: true }).notNull(),
+  startDate: timestamp('start_date', { withTimezone: true }),
+  endDate: timestamp('end_date', { withTimezone: true }),
+  holidayDate: varchar('holiday_date', { length: 10 }), // YYYY-MM-DD
   daysCount: integer('days_count').notNull().default(1),
+  holidayType: varchar('holiday_type', { length: 32 }).notNull().default('PUBLIC'), // PUBLIC, RELIGIOUS, NATIONAL, COMPANY
+  isPaid: boolean('is_paid').notNull().default(true),
   isRecurring: boolean('is_recurring').notNull().default(false),
   year: integer('year').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -474,22 +1140,71 @@ export const leaveRequests = pgTable('leave_requests', {
 });
 
 /**
- * 27. Overtime Records Table (Time Module)
+ * 27. Timesheets Table (Time Module)
+ */
+export const timesheets = pgTable('timesheets', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id').notNull().unique(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  timesheetNumber: varchar('timesheet_number', { length: 32 }).notNull(), // TS-2026-00001
+  periodStart: varchar('period_start', { length: 10 }).notNull(), // YYYY-MM-DD
+  periodEnd: varchar('period_end', { length: 10 }).notNull(), // YYYY-MM-DD
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, SUBMITTED, UNDER_REVIEW, APPROVED, REJECTED, LOCKED
+  totalRegularMinutes: integer('total_regular_minutes').notNull().default(0),
+  totalOvertimeMinutes: integer('total_overtime_minutes').notNull().default(0),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  submittedBy: text('submitted_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  approvedBy: text('approved_by'),
+  rejectionReason: text('rejection_reason'),
+  lockedAt: timestamp('locked_at', { withTimezone: true }),
+  lockedBy: text('locked_by'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 27b. Timesheet Lines Table (Time Module)
+ */
+export const timesheetLines = pgTable('timesheet_lines', {
+  id: serial('id').primaryKey(),
+  timesheetId: varchar('timesheet_id', { length: 64 }).notNull().references(() => timesheets.id, { onDelete: 'cascade' }),
+  workDate: varchar('work_date', { length: 10 }).notNull(), // YYYY-MM-DD
+  attendanceDayId: varchar('attendance_day_id', { length: 64 }).references(() => attendanceDays.id, { onDelete: 'set null' }),
+  projectId: varchar('project_id', { length: 64 }),
+  siteId: varchar('site_id', { length: 64 }),
+  clientId: varchar('client_id', { length: 64 }),
+  costCenterId: varchar('cost_center_id', { length: 64 }).references(() => costCenters.id, { onDelete: 'set null' }),
+  activityCodeId: varchar('activity_code_id', { length: 64 }),
+  regularMinutes: integer('regular_minutes').notNull().default(0),
+  overtimeMinutes: integer('overtime_minutes').notNull().default(0),
+  notes: text('notes'),
+});
+
+/**
+ * 27c. Overtime Records Table (Time Module)
  */
 export const overtimeRecords = pgTable('overtime_records', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
   attendanceId: varchar('attendance_id', { length: 64 }).references(() => attendanceRecords.id, { onDelete: 'set null' }),
+  attendanceDayId: varchar('attendance_day_id', { length: 64 }).references(() => attendanceDays.id, { onDelete: 'set null' }),
   date: varchar('date', { length: 10 }).notNull(),
-  overtimeType: varchar('overtime_type', { length: 32 }).notNull(), // REGULAR_DAY, WEEKEND, HOLIDAY
+  overtimeType: varchar('overtime_type', { length: 32 }).notNull(), // REGULAR_DAY, WEEKEND, HOLIDAY, NIGHT, CUSTOM
   minutes: integer('minutes').notNull(),
-  statutoryRateMultiplier: text('statutory_rate_multiplier').notNull().default('1.25'), // 1.25x or 1.50x
+  source: varchar('source', { length: 32 }).notNull().default('ATTENDANCE'), // ATTENDANCE, MANUAL, SUPERVISOR_OVERRIDE
+  statutoryRateMultiplier: text('statutory_rate_multiplier').default('1.25'),
   status: varchar('status', { length: 32 }).notNull().default('PENDING'), // PENDING, APPROVED, REJECTED
   reason: text('reason'),
   approvedBy: text('approved_by'),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
 });
 
 /**
@@ -670,6 +1385,9 @@ export const employeesRelations = relations(employees, ({ one, many }) => ({
   bankDetails: many(employeeBankDetails),
   documents: many(employeeDocuments),
   history: many(employeeHistory),
+  assignments: many(employeeAssignments),
+  emergencyContacts: many(employeeEmergencyContacts),
+  dependents: many(employeeDependents),
 }));
 
 export const employeeContractsRelations = relations(employeeContracts, ({ one }) => ({

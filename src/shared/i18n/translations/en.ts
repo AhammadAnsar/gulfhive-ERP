@@ -213,6 +213,7 @@ export const enTranslations: Record<string, string> = {
   'time.tab.overtime': 'Overtime Records',
   'time.tab.holidays': 'Public Holidays',
   'time.tab.corrections': 'Attendance Corrections',
+  'time.tab.timesheets': 'Timesheets & Approvals',
   'time.action.check_in': 'Clock In',
   'time.action.check_out': 'Clock Out',
   'time.action.request_correction': 'Request Correction',

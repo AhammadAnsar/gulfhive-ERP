@@ -19,7 +19,10 @@ import {
   TrendingUp,
   LogIn,
   LogOut,
-  Sparkles
+  Sparkles,
+  FileText,
+  Download,
+  Lock,
 } from 'lucide-react';
 import {
   Button,
@@ -44,7 +47,7 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
   const { t, language } = useI18n();
   const { addToast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'attendance' | 'shifts' | 'rosters' | 'leave' | 'overtime' | 'holidays' | 'corrections'>('attendance');
+  const [activeTab, setActiveTab] = useState<'attendance' | 'shifts' | 'rosters' | 'leave' | 'overtime' | 'holidays' | 'corrections' | 'timesheets'>('attendance');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
 
   // Data states
@@ -56,6 +59,7 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
   const [overtimeList, setOvertimeList] = useState<any[]>([]);
   const [holidaysList, setHolidaysList] = useState<any[]>([]);
   const [correctionsList, setCorrectionsList] = useState<any[]>([]);
+  const [timesheetsList, setTimesheetsList] = useState<any[]>([]);
   const [employeesList, setEmployeesList] = useState<any[]>([]);
 
   const [isLoading, setIsLoading] = useState(false);
@@ -69,6 +73,7 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
   const [showOvertimeDialog, setShowOvertimeDialog] = useState(false);
   const [showHolidayDialog, setShowHolidayDialog] = useState(false);
   const [showCorrectionDialog, setShowCorrectionDialog] = useState(false);
+  const [showTimesheetDialog, setShowTimesheetDialog] = useState(false);
 
   // Forms
   const [checkInForm, setCheckInForm] = useState({ employeeId: '', date: selectedDate, shiftId: '' });
@@ -78,6 +83,11 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
   const [overtimeForm, setOvertimeForm] = useState({ employeeId: '', date: selectedDate, overtimeType: 'REGULAR_DAY', minutes: 120, reason: '' });
   const [holidayForm, setHolidayForm] = useState({ nameEn: '', nameAr: '', startDate: selectedDate, endDate: selectedDate, countryCode: company?.countryCode || 'KW', isRecurring: false });
   const [correctionForm, setCorrectionForm] = useState({ attendanceId: '', employeeId: '', requestedCheckIn: '', requestedCheckOut: '', reason: '' });
+  const [timesheetForm, setTimesheetForm] = useState({
+    employeeId: '',
+    periodStart: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
+    periodEnd: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().slice(0, 10),
+  });
 
   const loadAllData = async () => {
     if (!company?.id) return;
@@ -85,7 +95,7 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
     setErrorMsg(null);
 
     try {
-      const [attRes, shfRes, rstRes, lvReqRes, lvTypRes, otRes, holRes, corRes, empRes] = await Promise.all([
+      const [attRes, shfRes, rstRes, lvReqRes, lvTypRes, otRes, holRes, corRes, empRes, tsRes] = await Promise.all([
         fetch(`/api/companies/${company.id}/attendance?date=${selectedDate}`),
         fetch(`/api/companies/${company.id}/shifts`),
         fetch(`/api/companies/${company.id}/rosters`),
@@ -95,6 +105,7 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
         fetch(`/api/companies/${company.id}/holidays`),
         fetch(`/api/companies/${company.id}/attendance-corrections`),
         fetch(`/api/companies/${company.id}/employees`),
+        fetch(`/api/companies/${company.id}/timesheets`),
       ]);
 
       if (attRes.ok) setAttendanceList((await attRes.json()).attendance || []);
@@ -106,6 +117,7 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
       if (holRes.ok) setHolidaysList((await holRes.json()).holidays || []);
       if (corRes.ok) setCorrectionsList((await corRes.json()).corrections || []);
       if (empRes.ok) setEmployeesList((await empRes.json()).employees || []);
+      if (tsRes.ok) setTimesheetsList((await tsRes.json()).timesheets || []);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to load Time module data');
     } finally {
@@ -311,6 +323,62 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
       loadAllData();
     } catch (err: any) {
       addToast({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handleGenerateTimesheet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!timesheetForm.employeeId || !timesheetForm.periodStart || !timesheetForm.periodEnd) return;
+
+    try {
+      const res = await fetch(`/api/companies/${company.id}/timesheets/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...timesheetForm,
+          actorId: 'admin',
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to generate timesheet');
+      }
+
+      const data = await res.json();
+      addToast({
+        type: 'success',
+        title: 'Timesheet Generated',
+        message: `Generated ${data.timesheet?.timesheetNumber || 'successfully'}`
+      });
+      setShowTimesheetDialog(false);
+      loadAllData();
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Timesheet Generation Error', message: err.message });
+    }
+  };
+
+  const handleTimesheetAction = async (id: string, action: 'submit' | 'approve' | 'lock') => {
+    try {
+      const res = await fetch(`/api/companies/${company.id}/timesheets/${id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actorId: 'admin' }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `Failed to ${action} timesheet`);
+      }
+
+      addToast({
+        type: 'success',
+        title: 'Timesheet Updated',
+        message: `Timesheet status advanced to ${action}ed.`
+      });
+      loadAllData();
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Action Failed', message: err.message });
     }
   };
 
@@ -690,6 +758,99 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
     },
   ];
 
+  const timesheetColumns: Column<any>[] = [
+    {
+      key: 'timesheetNumber',
+      header: 'Timesheet #',
+      sortable: true,
+      render: (ts) => (
+        <span className="font-mono font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded text-xs">
+          {ts.timesheetNumber}
+        </span>
+      ),
+    },
+    {
+      key: 'employee',
+      header: 'Employee',
+      sortable: true,
+      render: (ts) => (
+        <div>
+          <span className="font-semibold text-slate-900 block">{ts.employeeNameEn}</span>
+          <span className="font-mono text-[11px] text-slate-400">{ts.employeeNumber}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'period',
+      header: 'Period Window',
+      render: (ts) => (
+        <span className="font-mono text-xs text-slate-700">
+          {ts.periodStart} → {ts.periodEnd}
+        </span>
+      ),
+    },
+    {
+      key: 'regularHours',
+      header: 'Regular Time',
+      render: (ts) => (
+        <span className="font-mono text-xs font-semibold text-slate-800">
+          {((ts.totalRegularMinutes || 0) / 60).toFixed(1)} hrs
+        </span>
+      ),
+    },
+    {
+      key: 'overtimeHours',
+      header: 'Candidate OT',
+      render: (ts) => (
+        <span className="font-mono text-xs font-semibold text-amber-700">
+          {((ts.totalOvertimeMinutes || 0) / 60).toFixed(1)} hrs
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Lifecycle Status',
+      render: (ts) => {
+        const colors: Record<string, string> = {
+          DRAFT: 'bg-slate-100 text-slate-700 border-slate-300',
+          SUBMITTED: 'bg-blue-50 text-blue-700 border-blue-200',
+          APPROVED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+          LOCKED: 'bg-purple-50 text-purple-700 border-purple-200',
+        };
+        return (
+          <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-mono font-bold ${colors[ts.status] || ''}`}>
+            {ts.status === 'LOCKED' && <Lock className="w-2.5 h-2.5 mr-1 rtl:ml-1" />}
+            {ts.status}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (ts) => (
+        <div className="flex items-center justify-end space-x-1.5 rtl:space-x-reverse">
+          {ts.status === 'DRAFT' && (
+            <Button size="sm" variant="primary" onClick={() => handleTimesheetAction(ts.id, 'submit')}>
+              Submit
+            </Button>
+          )}
+          {ts.status === 'SUBMITTED' && (
+            <Button size="sm" variant="success" onClick={() => handleTimesheetAction(ts.id, 'approve')}>
+              Approve
+            </Button>
+          )}
+          {ts.status === 'APPROVED' && (
+            <Button size="sm" variant="secondary" leftIcon={<Lock className="w-3 h-3" />} onClick={() => handleTimesheetAction(ts.id, 'lock')}>
+              Lock for Payroll
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Module Navigation Tabs */}
@@ -703,6 +864,7 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
             { id: 'overtime', label: t('time.tab.overtime'), icon: TrendingUp, count: overtimeList.length },
             { id: 'holidays', label: t('time.tab.holidays'), icon: Sparkles, count: holidaysList.length },
             { id: 'corrections', label: t('time.tab.corrections'), icon: AlertTriangle, count: correctionsList.length },
+            { id: 'timesheets', label: t('time.tab.timesheets'), icon: FileText, count: timesheetsList.length },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -734,6 +896,24 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
                 onChange={(e) => setSelectedDate(e.target.value)}
                 className="py-1 text-xs w-36 font-mono"
               />
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={<Download className="w-3.5 h-3.5" />}
+                onClick={() => window.open(`/api/companies/${company?.id}/time/reports/export-pdf?workDate=${selectedDate}`, '_blank')}
+                title="Export Daily Attendance PDF Report"
+              >
+                PDF
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={<Download className="w-3.5 h-3.5" />}
+                onClick={() => window.open(`/api/companies/${company?.id}/time/reports/export-csv?workDate=${selectedDate}`, '_blank')}
+                title="Export Daily Attendance CSV"
+              >
+                CSV
+              </Button>
               <Button
                 variant="primary"
                 size="sm"
@@ -767,6 +947,11 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
           {activeTab === 'holidays' && (
             <Button variant="primary" size="sm" leftIcon={<Plus className="w-3.5 h-3.5" />} onClick={() => setShowHolidayDialog(true)}>
               {t('time.action.new_holiday')}
+            </Button>
+          )}
+          {activeTab === 'timesheets' && (
+            <Button variant="primary" size="sm" leftIcon={<Plus className="w-3.5 h-3.5" />} onClick={() => setShowTimesheetDialog(true)}>
+              Generate Timesheet
             </Button>
           )}
         </div>
@@ -861,6 +1046,19 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
           isLoading={isLoading}
           searchable={true}
           searchPlaceholder="Search punch correction requests..."
+          pageSize={10}
+        />
+      )}
+
+      {/* TAB 8: Timesheets & Authoritative Allocations */}
+      {activeTab === 'timesheets' && (
+        <Table
+          columns={timesheetColumns}
+          data={timesheetsList}
+          keyExtractor={(ts) => ts.id}
+          isLoading={isLoading}
+          searchable={true}
+          searchPlaceholder="Search timesheets by number or employee..."
           pageSize={10}
         />
       )}
@@ -1363,6 +1561,65 @@ export function TimeModule({ company, branches, activeBranchId }: TimeModuleProp
               required
             />
           </FormField>
+        </form>
+      </Dialog>
+
+      {/* Generate Timesheet Modal */}
+      <Dialog
+        isOpen={showTimesheetDialog}
+        onClose={() => setShowTimesheetDialog(false)}
+        title="Generate Authoritative Timesheet"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setShowTimesheetDialog(false)}>
+              {t('action.cancel')}
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleGenerateTimesheet}>
+              Generate Document
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={handleGenerateTimesheet} className="space-y-3">
+          <FormField label="Target Employee" required>
+            <Select
+              value={timesheetForm.employeeId}
+              onChange={(e) => setTimesheetForm({ ...timesheetForm, employeeId: e.target.value })}
+              required
+            >
+              <option value="">Select Employee...</option>
+              {employeesList.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.employeeNumber} - {emp.firstNameEn} {emp.lastNameEn}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Period Start Date" required>
+              <Input
+                type="date"
+                value={timesheetForm.periodStart}
+                onChange={(e) => setTimesheetForm({ ...timesheetForm, periodStart: e.target.value })}
+                required
+              />
+            </FormField>
+            <FormField label="Period End Date" required>
+              <Input
+                type="date"
+                value={timesheetForm.periodEnd}
+                onChange={(e) => setTimesheetForm({ ...timesheetForm, periodEnd: e.target.value })}
+                required
+              />
+            </FormField>
+          </div>
+
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-600 space-y-1">
+            <p className="font-semibold text-slate-800">Deterministic Document Numbering:</p>
+            <p>Assigns sequential numbering via Numbering Engine (e.g. <span className="font-mono font-bold">TS-2026-00001</span>).</p>
+            <p>Aggregates approved attendance days, candidate overtime minutes, and checks for overlapping locked periods.</p>
+          </div>
         </form>
       </Dialog>
     </div>

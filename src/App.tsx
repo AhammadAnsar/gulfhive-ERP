@@ -15,6 +15,7 @@ import { PeopleModule } from './modules/people/PeopleModule.tsx';
 import { TimeModule } from './modules/time/TimeModule.tsx';
 import { PayrollModule } from './modules/payroll/PayrollModule.tsx';
 import { DashboardModule } from './modules/dashboard/DashboardModule.tsx';
+import { SettingsModule } from './modules/settings/SettingsModule.tsx';
 import {
   Coins,
   FileCheck,
@@ -255,119 +256,12 @@ function MainWorkspace() {
           activeBranchId={activeBranchId}
         />
       ) : activeModule === 'settings' ? (
-        <div className="space-y-8">
-          <CompanyManagement
-            company={activeCompany}
-            activeBranchId={activeBranchId}
-            onSelectBranch={setActiveBranchId}
-            onCompanyUpdated={() => fetchCompanyBranches(activeCompany.id)}
-          />
-
-          {/* Decimal-Safe Arithmetic Verifier */}
-          <div className="bg-white rounded-lg border border-slate-200 shadow-2xs p-6">
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <Coins className="w-5 h-5 text-slate-800" />
-                <h2 className="text-sm font-bold text-slate-900">{t('foundation.money.title')}</h2>
-              </div>
-              <span className="text-[11px] font-mono text-slate-500">
-                Banker\'s Rounding · Arbitrary Precision
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">{t('label.currency')}</label>
-                  <Select
-                    value={selectedCurrency}
-                    onChange={(e) => setSelectedCurrency(e.target.value)}
-                  >
-                    {Object.values(SUPPORTED_CURRENCIES).map((curr) => (
-                      <option key={curr.code} value={curr.code}>
-                        {curr.code} - {language === 'ar' ? curr.nameAr : curr.nameEn} ({curr.decimals} Decimals)
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Amount String</label>
-                  <Input
-                    type="text"
-                    value={calcInput}
-                    onChange={(e) => setCalcInput(e.target.value)}
-                    className="font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Ratios Allocation</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[0, 1, 2].map((idx) => (
-                      <Input
-                        key={idx}
-                        type="number"
-                        min="1"
-                        value={calcAllocation[idx]}
-                        onChange={(e) => {
-                          const updated = [...calcAllocation];
-                          updated[idx] = e.target.value;
-                          setCalcAllocation(updated);
-                        }}
-                        className="font-mono text-center"
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="lg:col-span-2 bg-slate-50 rounded-lg p-5 border border-slate-200 flex flex-col justify-between">
-                {moneyError ? (
-                  <div className="text-xs text-rose-600 font-mono p-3 bg-rose-50 rounded border border-rose-200">
-                    {moneyError}
-                  </div>
-                ) : computedMoney ? (
-                  <div className="space-y-4 text-xs font-mono">
-                    <div className="grid grid-cols-2 gap-4 pb-4 border-b border-slate-200">
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">Canonical Decimal:</span>
-                        <span className="text-sm font-bold text-slate-900">{computedMoney.toDecimalString()}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">Subunits (Fils / Halalas):</span>
-                        <span className="text-sm font-bold text-slate-900">{computedMoney.toSubunits().toString()}</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4 pb-4 border-b border-slate-200">
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">English Format:</span>
-                        <span className="text-slate-800 font-medium">{computedMoney.toFormattedString(false)}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">Arabic Format (RTL):</span>
-                        <span className="text-slate-800 font-medium">{computedMoney.toFormattedString(true)}</span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-slate-400 block mb-2">Remainder-Free Allocation Result:</span>
-                      <div className="grid grid-cols-3 gap-2">
-                        {allocationShares.map((share, idx) => (
-                          <div key={idx} className="bg-white p-2 rounded border border-slate-200 text-center">
-                            <span className="text-[10px] text-slate-400 block">Share {idx + 1}</span>
-                            <span className="font-bold text-slate-800">{share.toFormattedString(language === 'ar')}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
+        <SettingsModule
+          company={activeCompany}
+          branches={companyBranches}
+          activeBranchId={activeBranchId}
+          onCompanyUpdated={() => fetchCompanyBranches(activeCompany.id)}
+        />
       ) : (
         <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-2xs text-center space-y-4">
           <div className="w-10 h-10 mx-auto rounded bg-slate-100 flex items-center justify-center text-slate-600">

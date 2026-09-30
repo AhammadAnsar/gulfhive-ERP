@@ -213,6 +213,7 @@ export const arTranslations: Record<string, string> = {
   'time.tab.overtime': 'العمل الإضافي',
   'time.tab.holidays': 'العطلات الرسمية',
   'time.tab.corrections': 'تصحيحات الحضور',
+  'time.tab.timesheets': 'بطاقات الدوام والاعتمادات',
   'time.action.check_in': 'تسجيل حضور',
   'time.action.check_out': 'تسجيل انصراف',
   'time.action.request_correction': 'طلب تصحيح بصمة',

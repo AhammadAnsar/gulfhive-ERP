@@ -81,7 +81,7 @@ export function NewEmployeeDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.employeeNumber || !form.firstNameEn || !form.lastNameEn || !form.firstNameAr || !form.lastNameAr || !form.email || !form.branchId || !form.basicSalary) {
+    if (!form.firstNameEn || !form.lastNameEn || !form.firstNameAr || !form.lastNameAr || !form.email || !form.branchId || !form.basicSalary) {
       addToast({
         type: 'error',
         title: 'Validation Error',
@@ -95,7 +95,10 @@ export function NewEmployeeDialog({
       const res = await fetch(`/api/companies/${company.id}/employees`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          employeeNumber: form.employeeNumber.trim() || undefined,
+        }),
       });
 
       const data = await res.json();
@@ -163,14 +166,13 @@ export function NewEmployeeDialog({
         {activeSection === 'personal' && (
           <div className="space-y-3.5">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <FormField label={t('people.field.emp_number')} required>
+              <FormField label={t('people.field.emp_number')}>
                 <Input
                   type="text"
                   value={form.employeeNumber}
                   onChange={(e) => updateField('employeeNumber', e.target.value.toUpperCase())}
-                  placeholder="e.g. EMP-101"
+                  placeholder="Auto-generated (e.g. EMP-00001)"
                   className="font-mono uppercase"
-                  required
                 />
               </FormField>
 

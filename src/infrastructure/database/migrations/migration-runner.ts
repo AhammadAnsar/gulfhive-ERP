@@ -4,9 +4,15 @@
  */
 
 import { createHash } from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Pool } from 'pg';
 import { createPool } from '../../../db/index.ts';
 import { logger } from '../../../core/logging/logger.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export interface MigrationFile {
   readonly version: number;
@@ -27,6 +33,65 @@ export class MigrationRunner {
 
   constructor(pool?: Pool) {
     this.pool = pool || createPool();
+  }
+
+  public async runAllMigrations(): Promise<MigrationStatus[]> {
+    await this.ensureMigrationTable();
+
+    const m0001Path = path.resolve(__dirname, '0001_initial_core_schema.sql');
+    const m0002Path = path.resolve(__dirname, '0002_organization_master_data.sql');
+    const m0004Path = path.resolve(__dirname, '0004_identity_security_authorization.sql');
+    const m0005Path = path.resolve(__dirname, '0005_people_employee_module.sql');
+    const m0006Path = path.resolve(__dirname, '0006_time_attendance_timesheet.sql');
+
+    const migrations: MigrationFile[] = [];
+
+    if (fs.existsSync(m0001Path)) {
+      migrations.push({
+        version: 1,
+        name: '0001_initial_core_schema.sql',
+        sql: fs.readFileSync(m0001Path, 'utf8'),
+      });
+    }
+
+    if (fs.existsSync(m0002Path)) {
+      migrations.push({
+        version: 2,
+        name: '0002_organization_master_data.sql',
+        sql: fs.readFileSync(m0002Path, 'utf8'),
+      });
+    }
+
+    if (fs.existsSync(m0004Path)) {
+      migrations.push({
+        version: 4,
+        name: '0004_identity_security_authorization.sql',
+        sql: fs.readFileSync(m0004Path, 'utf8'),
+      });
+    }
+
+    if (fs.existsSync(m0005Path)) {
+      migrations.push({
+        version: 5,
+        name: '0005_people_employee_module.sql',
+        sql: fs.readFileSync(m0005Path, 'utf8'),
+      });
+    }
+
+    if (fs.existsSync(m0006Path)) {
+      migrations.push({
+        version: 6,
+        name: '0006_time_attendance_timesheet.sql',
+        sql: fs.readFileSync(m0006Path, 'utf8'),
+      });
+    }
+
+    const results: MigrationStatus[] = [];
+    for (const m of migrations) {
+      const status = await this.runMigration(m);
+      results.push(status);
+    }
+    return results;
   }
 
   public async ensureMigrationTable(): Promise<void> {
