@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      // Ensure window.fetch accessor defined by iframe bridge is safe for reassignment
+      (function() {
+        var originalDefineProperty = Object.defineProperty;
+        Object.defineProperty = function(obj, prop, descriptor) {
+          if (obj === window && prop === 'fetch' && descriptor && descriptor.get && !descriptor.set) {
+            var getter = descriptor.get;
+            var customSetter = function(val) {
+              getter = function() { return val; };
+            };
+            return originalDefineProperty.call(this, obj, prop, {
+              get: function() { return getter(); },
+              set: customSetter,
+              configurable: true,
+              enumerable: descriptor.enumerable !== undefined ? descriptor.enumerable : true,
+            });
+          }
+          return originalDefineProperty.apply(this, arguments);
+        };
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GulfHive ERP</title>
+    <meta name="description" content="Enterprise Resource Planning system tailored for Gulf Cooperation Council businesses, built with clean architecture, domain-driven design, and strict auditability." />
+    <meta property="og:title" content="GulfHive ERP" />
+    <meta property="og:description" content="Enterprise Resource Planning system tailored for Gulf Cooperation Council businesses, built with clean architecture, domain-driven design, and strict auditability." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

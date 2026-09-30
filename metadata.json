@@ -1,0 +1,6 @@
+{
+  "name": "GulfHive ERP",
+  "description": "Enterprise Resource Planning system tailored for Gulf Cooperation Council businesses, built with clean architecture, domain-driven design, and strict auditability.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
