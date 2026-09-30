@@ -22,6 +22,7 @@ import {
   auditLogs,
 } from '../../../db/schema.ts';
 import { numberingRepository } from './numbering.repository.ts';
+import { partyRepository } from './party.repository.ts';
 import { Money } from '../../../core/domain/money.ts';
 import { logger } from '../../../core/logging/logger.ts';
 
@@ -79,10 +80,40 @@ export class ProcurementRepository {
       throw new Error(`Supplier with code '${cleanCode}' already exists.`);
     }
 
+    // Sync with Unified Party Core
+    let partyId: number | null = null;
+    try {
+      const party = await partyRepository.createParty(
+        tenantId,
+        {
+          legalNameEn: input.nameEn,
+          legalNameAr: input.nameAr,
+          crNumber: input.crNumber,
+          taxNumber: input.vatNumber,
+          email: input.email,
+          phone: input.phone,
+          website: input.website,
+          roles: ['SUPPLIER'],
+          supplierProfile: {
+            paymentTermsId: input.paymentTermsId || '30 Days',
+            purchaseCurrency: input.currency || 'KWD',
+            bankName: input.bankName,
+            bankIban: input.bankIban,
+            bankSwift: input.bankSwift,
+          },
+        },
+        actorId
+      );
+      if (party) partyId = party.id;
+    } catch (pErr: any) {
+      logger.debug(`Party creation info: ${pErr.message}`);
+    }
+
     const [inserted] = await db
       .insert(suppliers)
       .values({
         tenantId,
+        partyId,
         code: cleanCode,
         nameEn: input.nameEn.trim(),
         nameAr: input.nameAr.trim(),
@@ -1345,6 +1376,16 @@ export class ProcurementRepository {
     },
     actorId = 'system'
   ) {
+    // Cross-company relational validation
+    const [sCheck] = await db
+      .select()
+      .from(suppliers)
+      .where(and(eq(suppliers.id, input.supplierId), eq(suppliers.tenantId, tenantId)))
+      .limit(1);
+    if (!sCheck) {
+      throw new Error('Cross-company reference violation: Supplier does not belong to the active company.');
+    }
+
     const num = await numberingRepository.generateNextNumber(tenantId, 'SUP_BILL');
 
     // Duplicate Supplier Invoice Reference Check
@@ -1704,6 +1745,15 @@ export class ProcurementRepository {
     const num = await numberingRepository.generateNextNumber(tenantId, 'SUP_PAYMENT');
 
     return db.transaction(async (tx) => {
+      // Cross-company relational validation
+      const [sCheck] = await tx
+        .select()
+        .from(suppliers)
+        .where(and(eq(suppliers.id, input.supplierId), eq(suppliers.tenantId, tenantId)))
+        .limit(1);
+      if (!sCheck) {
+        throw new Error('Cross-company reference violation: Supplier does not belong to the active company.');
+      }
       const [pay] = await tx
         .insert(supplierPayments)
         .values({

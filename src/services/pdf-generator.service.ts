@@ -4,6 +4,7 @@
  */
 
 import PDFDocument from 'pdfkit';
+import { registerArabicFonts } from './pdf-font-helper.ts';
 
 export interface IDCardData {
   employeeNumber: string;
@@ -35,6 +36,7 @@ export class PDFGeneratorService {
           size: [243, 153], // Standard CR80 ID Card dimensions in points
           margin: 0,
         });
+        registerArabicFonts(doc);
 
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
@@ -81,11 +83,20 @@ export class PDFGeneratorService {
         // Full Name
         const fullName = `${data.firstNameEn} ${data.lastNameEn}`;
         doc.fillColor('#0F172A')
-          .fontSize(10)
+          .fontSize(9)
           .font('Helvetica-Bold')
-          .text(fullName, textX, currentY, { width: 158, height: 14 });
+          .text(fullName, textX, currentY, { width: 158, height: 12 });
 
-        currentY += 13;
+        if (data.firstNameAr || data.lastNameAr) {
+          const fullNameAr = `${data.firstNameAr || ''} ${data.lastNameAr || ''}`.trim();
+          doc.fillColor('#0F172A')
+            .fontSize(9)
+            .font('Amiri-Bold')
+            .text(fullNameAr, textX, currentY + 11, { width: 158, align: 'right', features: ['rtla'] });
+          currentY += 23;
+        } else {
+          currentY += 13;
+        }
 
         // Employee Code Badge
         doc.rect(textX, currentY, 68, 12).fill('#0284C7');
@@ -142,6 +153,7 @@ export class PDFGeneratorService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -166,7 +178,11 @@ export class PDFGeneratorService {
 
         // Basic Information Box
         doc.rect(40, y, 515, 120).stroke('#CBD5E1');
-        doc.fillColor('#0F172A').fontSize(12).font('Helvetica-Bold').text(`${data.firstNameEn} ${data.lastNameEn} (${data.firstNameAr} ${data.lastNameAr})`, 55, y + 15);
+        doc.fillColor('#0F172A').fontSize(11).font('Helvetica-Bold').text(`${data.firstNameEn || ''} ${data.lastNameEn || ''}`, 55, y + 15);
+        if (data.firstNameAr || data.lastNameAr) {
+          const fullNameAr = `${data.firstNameAr || ''} ${data.lastNameAr || ''}`.trim();
+          doc.fillColor('#0F172A').fontSize(11).font('Amiri-Bold').text(fullNameAr, 300, y + 14, { width: 240, align: 'right', features: ['rtla'] });
+        }
         doc.fillColor('#64748B').fontSize(9).font('Helvetica').text(`Status: ${data.employmentStatus} · Gender: ${data.gender} · Marital Status: ${data.maritalStatus || 'Single'}`, 55, y + 32);
 
         doc.moveTo(55, y + 48).lineTo(540, y + 48).stroke('#E2E8F0');

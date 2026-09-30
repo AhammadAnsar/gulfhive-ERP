@@ -1,9 +1,10 @@
 /**
- * GulfHive ERP - Versioned Country Compliance Engine
+ * GulfHive ERP - Versioned Country Compliance Engine & Statutory Rules
  * Encapsulates statutory social insurance, overtime multipliers, and labor law indemnity rules.
- * Keeps legal specifics isolated from generic payroll domain logic.
+ * Strictly decimal-safe: uses Decimal.js & Money value objects without floating point or Math.round().
  */
 
+import Decimal from 'decimal.js';
 import { Money } from '../../core/domain/money.ts';
 
 export interface StatutorySocialInsuranceResult {
@@ -50,7 +51,8 @@ export interface StatutoryEosbCalculationResult {
 
 export class StatutoryRulesService {
   /**
-   * Determine social insurance contributions (PIFSS in Kuwait, GOSI in Saudi, etc.)
+   * Determine social insurance contributions (PIFSS in Kuwait, GOSI in Saudi, SIO in Bahrain, etc.)
+   * Decimal-safe calculation.
    */
   public static calculateSocialInsurance(params: {
     countryCode: string;
@@ -71,7 +73,6 @@ export class StatutoryRulesService {
     const isKuwait = countryCode.toUpperCase() === 'KW';
     const isSaudi = countryCode.toUpperCase() === 'SA';
     const isBahrain = countryCode.toUpperCase() === 'BH';
-    const isUAE = countryCode.toUpperCase() === 'AE';
 
     const isCitizen = this.isNational(countryCode, nationality);
 
@@ -82,11 +83,11 @@ export class StatutoryRulesService {
           isApplicable: false,
           schemeName: 'Kuwait Expatriate Labor Regime (Statutory Gratuity Only)',
           ruleVersion: 'KW-PIFSS-2026.1',
-          contributoryBaseAmount: '0.000',
+          contributoryBaseAmount: Money.zero(currency).toDecimalString(),
           employeeRate: 0,
-          employeeContributionAmount: '0.000',
+          employeeContributionAmount: Money.zero(currency).toDecimalString(),
           employerRate: 0,
-          employerContributionAmount: '0.000',
+          employerContributionAmount: Money.zero(currency).toDecimalString(),
           ceilingApplied: false,
           sourceReference: 'Kuwait Social Security Law (Amiri Decree 61/1976)',
         };
@@ -95,24 +96,25 @@ export class StatutoryRulesService {
       // Contributory base = Basic + Regular allowances, capped at 3,000.000 KWD
       const totalContributoryM = basicM.add(housingM).add(transportM).add(otherM);
       const ceilingM = Money.create('3000.000', currency);
-      const isCapped = totalContributoryM.toSubunits() > ceilingM.toSubunits();
+      const isCapped = totalContributoryM.greaterThan(ceilingM);
       const effectiveBaseM = isCapped ? ceilingM : totalContributoryM;
 
       // Rates: Employee 10.5%, Employer 11.5% (Total 22%)
-      const empRate = 0.105;
-      const emplyrRate = 0.115;
-      const empSubunits = BigInt(Math.round(Number(effectiveBaseM.toSubunits()) * empRate));
-      const emplyrSubunits = BigInt(Math.round(Number(effectiveBaseM.toSubunits()) * emplyrRate));
+      const empRateStr = '0.105';
+      const emplyrRateStr = '0.115';
+
+      const empM = effectiveBaseM.multiply(empRateStr);
+      const emplyrM = effectiveBaseM.multiply(emplyrRateStr);
 
       return {
         isApplicable: true,
         schemeName: 'Kuwait Public Institution for Social Security (PIFSS)',
         ruleVersion: 'KW-PIFSS-2026.1',
         contributoryBaseAmount: effectiveBaseM.toDecimalString(),
-        employeeRate: empRate,
-        employeeContributionAmount: Money.fromSubunits(empSubunits, currency).toDecimalString(),
-        employerRate: emplyrRate,
-        employerContributionAmount: Money.fromSubunits(emplyrSubunits, currency).toDecimalString(),
+        employeeRate: 0.105,
+        employeeContributionAmount: empM.toDecimalString(),
+        employerRate: 0.115,
+        employerContributionAmount: emplyrM.toDecimalString(),
         ceilingApplied: isCapped,
         ceilingAmount: '3000.000',
         sourceReference: 'Amiri Decree Law No. 61 of 1976 & Ministerial Decrees on Contribution Ceilings',
@@ -121,12 +123,14 @@ export class StatutoryRulesService {
 
     // 2. SAUDI ARABIA — GOSI (General Organization for Social Insurance)
     if (isSaudi) {
+      const ceilingM = Money.create('45000.00', currency);
+
       if (!isCitizen) {
         // Expatriate workers in KSA have 2% Employer Occupational Hazards contribution
         const expatBaseM = basicM.add(housingM);
-        const expatCeilingM = Money.create('45000.00', currency);
-        const effectiveExpatBaseM = expatBaseM.toSubunits() > expatCeilingM.toSubunits() ? expatCeilingM : expatBaseM;
-        const expatEmplyrSubunits = BigInt(Math.round(Number(effectiveExpatBaseM.toSubunits()) * 0.02));
+        const isCapped = expatBaseM.greaterThan(ceilingM);
+        const effectiveExpatBaseM = isCapped ? ceilingM : expatBaseM;
+        const expatEmplyrM = effectiveExpatBaseM.multiply('0.02');
 
         return {
           isApplicable: true,
@@ -134,10 +138,10 @@ export class StatutoryRulesService {
           ruleVersion: 'SA-GOSI-2026.1',
           contributoryBaseAmount: effectiveExpatBaseM.toDecimalString(),
           employeeRate: 0,
-          employeeContributionAmount: '0.00',
+          employeeContributionAmount: Money.zero(currency).toDecimalString(),
           employerRate: 0.02,
-          employerContributionAmount: Money.fromSubunits(expatEmplyrSubunits, currency).toDecimalString(),
-          ceilingApplied: expatBaseM.toSubunits() > expatCeilingM.toSubunits(),
+          employerContributionAmount: expatEmplyrM.toDecimalString(),
+          ceilingApplied: isCapped,
           ceilingAmount: '45000.00',
           sourceReference: 'Saudi Social Insurance Law (Royal Decree M/33)',
         };
@@ -145,24 +149,21 @@ export class StatutoryRulesService {
 
       // Saudi Nationals: 9.75% Employee (9% Annuities + 0.75% SANED), 11.75% Employer (9% Annuities + 0.75% SANED + 2% Hazards)
       const totalContributoryM = basicM.add(housingM);
-      const ceilingM = Money.create('45000.00', currency);
-      const isCapped = totalContributoryM.toSubunits() > ceilingM.toSubunits();
+      const isCapped = totalContributoryM.greaterThan(ceilingM);
       const effectiveBaseM = isCapped ? ceilingM : totalContributoryM;
 
-      const empRate = 0.0975;
-      const emplyrRate = 0.1175;
-      const empSubunits = BigInt(Math.round(Number(effectiveBaseM.toSubunits()) * empRate));
-      const emplyrSubunits = BigInt(Math.round(Number(effectiveBaseM.toSubunits()) * emplyrRate));
+      const empM = effectiveBaseM.multiply('0.0975');
+      const emplyrM = effectiveBaseM.multiply('0.1175');
 
       return {
         isApplicable: true,
         schemeName: 'Saudi General Organization for Social Insurance (GOSI & SANED)',
         ruleVersion: 'SA-GOSI-2026.1',
         contributoryBaseAmount: effectiveBaseM.toDecimalString(),
-        employeeRate: empRate,
-        employeeContributionAmount: Money.fromSubunits(empSubunits, currency).toDecimalString(),
-        employerRate: emplyrRate,
-        employerContributionAmount: Money.fromSubunits(emplyrSubunits, currency).toDecimalString(),
+        employeeRate: 0.0975,
+        employeeContributionAmount: empM.toDecimalString(),
+        employerRate: 0.1175,
+        employerContributionAmount: emplyrM.toDecimalString(),
         ceilingApplied: isCapped,
         ceilingAmount: '45000.00',
         sourceReference: 'Royal Decree M/33 & Unemployment Insurance (SANED) Royal Decree M/18',
@@ -173,9 +174,11 @@ export class StatutoryRulesService {
     if (isBahrain && isCitizen) {
       const baseM = basicM.add(housingM);
       const ceilingM = Money.create('4000.000', currency);
-      const effectiveBaseM = baseM.toSubunits() > ceilingM.toSubunits() ? ceilingM : baseM;
-      const empSubunits = BigInt(Math.round(Number(effectiveBaseM.toSubunits()) * 0.08)); // 7% pension + 1% unemployment
-      const emplyrSubunits = BigInt(Math.round(Number(effectiveBaseM.toSubunits()) * 0.15)); // 12% + 3% hazards
+      const isCapped = baseM.greaterThan(ceilingM);
+      const effectiveBaseM = isCapped ? ceilingM : baseM;
+
+      const empM = effectiveBaseM.multiply('0.08'); // 7% pension + 1% unemployment
+      const emplyrM = effectiveBaseM.multiply('0.15'); // 12% + 3% hazards
 
       return {
         isApplicable: true,
@@ -183,10 +186,10 @@ export class StatutoryRulesService {
         ruleVersion: 'BH-SIO-2026.1',
         contributoryBaseAmount: effectiveBaseM.toDecimalString(),
         employeeRate: 0.08,
-        employeeContributionAmount: Money.fromSubunits(empSubunits, currency).toDecimalString(),
+        employeeContributionAmount: empM.toDecimalString(),
         employerRate: 0.15,
-        employerContributionAmount: Money.fromSubunits(emplyrSubunits, currency).toDecimalString(),
-        ceilingApplied: baseM.toSubunits() > ceilingM.toSubunits(),
+        employerContributionAmount: emplyrM.toDecimalString(),
+        ceilingApplied: isCapped,
         ceilingAmount: '4000.000',
         sourceReference: 'Bahrain Decree-Law No. 24 of 1976',
       };
@@ -197,11 +200,11 @@ export class StatutoryRulesService {
       isApplicable: false,
       schemeName: 'Standard Labor Gratuity Regime',
       ruleVersion: 'GCC-GEN-2026.1',
-      contributoryBaseAmount: '0.000',
+      contributoryBaseAmount: Money.zero(currency).toDecimalString(),
       employeeRate: 0,
-      employeeContributionAmount: '0.000',
+      employeeContributionAmount: Money.zero(currency).toDecimalString(),
       employerRate: 0,
-      employerContributionAmount: '0.000',
+      employerContributionAmount: Money.zero(currency).toDecimalString(),
       ceilingApplied: false,
       sourceReference: 'General Labor Law Provisions',
     };
@@ -246,7 +249,7 @@ export class StatutoryRulesService {
   }
 
   /**
-   * End of Service Indemnity / Gratuity calculation
+   * End of Service Indemnity / Gratuity calculation - Decimal Safe
    */
   public static calculateEndOfService(params: {
     countryCode: string;
@@ -260,58 +263,49 @@ export class StatutoryRulesService {
     const { countryCode, contractType, terminationType, joiningDate, lastWorkingDate, lastBasicSalary, currency } = params;
     const diffMs = Math.max(lastWorkingDate.getTime() - joiningDate.getTime(), 0);
     const serviceDaysTotal = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    const serviceYears = serviceDaysTotal / 365.25;
+    const serviceYearsDec = new Decimal(serviceDaysTotal).dividedBy('365.25');
 
     const basicM = Money.create(lastBasicSalary, currency);
 
     if (countryCode.toUpperCase() === 'KW') {
-      // Kuwait Labor Law Article 51:
-      // - First 5 years: 15 days basic wage per year (Daily rate = basic / 26 working days)
-      // - Above 5 years: 30 days basic wage per year
-      // - Cap: Maximum total indemnity is 1.5 years of basic salary (18 months = basic * 1.5)
-      const dailyWageM = Money.create(Number(basicM.amount) / 26, currency);
+      // Kuwait Labor Law Article 51 & 53
+      const dailyWageM = basicM.divide(26);
 
-      const first5Years = Math.min(serviceYears, 5);
-      const remainingYears = Math.max(serviceYears - 5, 0);
+      const first5YearsDec = Decimal.min(serviceYearsDec, 5);
+      const remainingYearsDec = Decimal.max(serviceYearsDec.minus(5), 0);
 
-      const first5AmountM = Money.create(Number(dailyWageM.amount) * 15 * first5Years, currency);
-      const remainingAmountM = Money.create(Number(basicM.amount) * remainingYears, currency);
+      const first5AmountM = dailyWageM.multiply(15).multiply(first5YearsDec);
+      const remainingAmountM = basicM.multiply(remainingYearsDec);
       const rawGratuityM = first5AmountM.add(remainingAmountM);
 
-      // Statutory Cap: 18 months of basic salary (1.5 years remuneration)
-      const capM = Money.create(Number(basicM.amount) * 18, currency);
-      const isCapped = rawGratuityM.toSubunits() > capM.toSubunits();
+      // Statutory Cap: 18 months of basic salary
+      const capM = basicM.multiply(18);
+      const isCapped = rawGratuityM.greaterThan(capM);
       const cappedGratuityM = isCapped ? capM : rawGratuityM;
 
-      // Article 53: Resignation Factor for UNLIMITED contracts:
-      // Less than 3 years: 0%
-      // 3 to 5 years: 50%
-      // 5 to 10 years: 2/3 (~66.6667%)
-      // 10 years or more: 100%
-      // Involuntary Termination / End of Contract: 100%
-      let factor = 1.0;
+      let factorDec = new Decimal(1.0);
       if (terminationType === 'RESIGNATION' && contractType === 'UNLIMITED') {
-        if (serviceYears < 3) factor = 0.0;
-        else if (serviceYears < 5) factor = 0.5;
-        else if (serviceYears < 10) factor = 2 / 3;
-        else factor = 1.0;
+        if (serviceYearsDec.lessThan(3)) factorDec = new Decimal(0);
+        else if (serviceYearsDec.lessThan(5)) factorDec = new Decimal(0.5);
+        else if (serviceYearsDec.lessThan(10)) factorDec = new Decimal('0.6666666666666666');
+        else factorDec = new Decimal(1.0);
       }
 
-      const finalGratuityM = Money.create(Number(cappedGratuityM.amount) * factor, currency);
+      const finalGratuityM = cappedGratuityM.multiply(factorDec);
 
       return {
-        serviceYears: Number(serviceYears.toFixed(2)),
+        serviceYears: Number(serviceYearsDec.toFixed(2)),
         serviceMonths: Math.floor((serviceDaysTotal % 365) / 30),
         serviceDays: serviceDaysTotal % 30,
         eligibleSalaryBase: basicM.toDecimalString(),
         gratuityAmount: finalGratuityM.toDecimalString(),
-        resignationFactor: factor,
+        resignationFactor: factorDec.toNumber(),
         ruleVersion: 'KW-LL-ART51-53-2026',
         sourceReference: 'Kuwait Labor Law No. 6/2010 Articles 51 & 53',
         breakdown: {
-          firstPeriodYears: Number(first5Years.toFixed(2)),
+          firstPeriodYears: Number(first5YearsDec.toFixed(2)),
           firstPeriodAmount: first5AmountM.toDecimalString(),
-          secondPeriodYears: Number(remainingYears.toFixed(2)),
+          secondPeriodYears: Number(remainingYearsDec.toFixed(2)),
           secondPeriodAmount: remainingAmountM.toDecimalString(),
           statutoryCapAmount: capM.toDecimalString(),
           isCapped,
@@ -320,15 +314,14 @@ export class StatutoryRulesService {
     }
 
     // Default / Saudi Labor Law Art. 84:
-    // Half month wage for first 5 years, one month wage for each subsequent year
-    const first5 = Math.min(serviceYears, 5);
-    const after5 = Math.max(serviceYears - 5, 0);
-    const halfMonthM = Money.create(Number(basicM.amount) * 0.5 * first5, currency);
-    const fullMonthM = Money.create(Number(basicM.amount) * after5, currency);
+    const first5Dec = Decimal.min(serviceYearsDec, 5);
+    const after5Dec = Decimal.max(serviceYearsDec.minus(5), 0);
+    const halfMonthM = basicM.multiply('0.5').multiply(first5Dec);
+    const fullMonthM = basicM.multiply(after5Dec);
     const totalGratuityM = halfMonthM.add(fullMonthM);
 
     return {
-      serviceYears: Number(serviceYears.toFixed(2)),
+      serviceYears: Number(serviceYearsDec.toFixed(2)),
       serviceMonths: Math.floor((serviceDaysTotal % 365) / 30),
       serviceDays: serviceDaysTotal % 30,
       eligibleSalaryBase: basicM.toDecimalString(),
@@ -337,9 +330,9 @@ export class StatutoryRulesService {
       ruleVersion: 'GCC-EOSB-STD-2026',
       sourceReference: 'Saudi Labor Law Royal Decree M/51 Article 84',
       breakdown: {
-        firstPeriodYears: Number(first5.toFixed(2)),
+        firstPeriodYears: Number(first5Dec.toFixed(2)),
         firstPeriodAmount: halfMonthM.toDecimalString(),
-        secondPeriodYears: Number(after5.toFixed(2)),
+        secondPeriodYears: Number(after5Dec.toFixed(2)),
         secondPeriodAmount: fullMonthM.toDecimalString(),
         statutoryCapAmount: 'No Statutory Cap',
         isCapped: false,
@@ -352,24 +345,12 @@ export class StatutoryRulesService {
     const nat = nationality.toLowerCase().trim();
     const c = countryCode.toUpperCase();
 
-    if (c === 'KW') {
-      return nat.includes('kuwait') || nat.includes('كويت');
-    }
-    if (c === 'SA') {
-      return nat.includes('saudi') || nat.includes('سعود');
-    }
-    if (c === 'BH') {
-      return nat.includes('bahrain') || nat.includes('بحرين');
-    }
-    if (c === 'AE') {
-      return nat.includes('emirati') || nat.includes('uae') || nat.includes('إمارات');
-    }
-    if (c === 'QA') {
-      return nat.includes('qatar') || nat.includes('قطر');
-    }
-    if (c === 'OM') {
-      return nat.includes('oman') || nat.includes('عمان');
-    }
+    if (c === 'KW') return nat.includes('kuwait') || nat.includes('كويت');
+    if (c === 'SA') return nat.includes('saudi') || nat.includes('سعود');
+    if (c === 'BH') return nat.includes('bahrain') || nat.includes('بحرين');
+    if (c === 'AE') return nat.includes('emirati') || nat.includes('uae') || nat.includes('إمارات');
+    if (c === 'QA') return nat.includes('qatar') || nat.includes('قطر');
+    if (c === 'OM') return nat.includes('oman') || nat.includes('عمان');
     return false;
   }
 }

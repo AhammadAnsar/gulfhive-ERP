@@ -50,6 +50,12 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+export class UnauthenticatedError extends AppError {
+  constructor(message = 'Invalid credentials or session expired.') {
+    super(message, 'UNAUTHENTICATED', 401, 'error.unauthenticated');
+  }
+}
+
 export class ForbiddenError extends AppError {
   constructor(message = 'Insufficient permissions for this operation.') {
     super(message, 'FORBIDDEN', 403, 'error.forbidden');

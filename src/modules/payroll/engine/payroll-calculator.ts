@@ -4,6 +4,7 @@
  * Attendance, Leave, Overtime, Adjustments, Loans, and versioned GCC statutory rules (PIFSS, GOSI, Gratuity/EOSB).
  */
 
+import Decimal from 'decimal.js';
 import { Money } from '../../../core/domain/money.ts';
 import { StatutoryRulesService } from '../../../services/compliance/statutory-rules.service.ts';
 import { FormulaEvaluator } from '../../../services/payroll/formula-evaluator.ts';
@@ -132,10 +133,11 @@ export class PayrollCalculator {
     let otherM = Money.create(input.otherAllowances || '0', curr);
 
     if (factor < 1.0) {
-      basicM = Money.create(Number(basicM.amount) * factor, curr);
-      housingM = Money.create(Number(housingM.amount) * factor, curr);
-      transportM = Money.create(Number(transportM.amount) * factor, curr);
-      otherM = Money.create(Number(otherM.amount) * factor, curr);
+      const factorDec = new Decimal(factor.toString());
+      basicM = basicM.multiply(factorDec);
+      housingM = housingM.multiply(factorDec);
+      transportM = transportM.multiply(factorDec);
+      otherM = otherM.multiply(factorDec);
     }
 
     resultLines.push({
@@ -185,23 +187,21 @@ export class PayrollCalculator {
 
     // 2. Overtime Computation (GCC 30-day labor month, 8-hour workday = 240 hours/month)
     const otPolicy = StatutoryRulesService.getOvertimePolicy(input.countryCode);
-    const hourlySubunits = basicM.toSubunits() / BigInt(otPolicy.hourlyBaseDivisor);
-    const otHours = (input.overtimeMinutes / 60).toFixed(2);
-    const multiplier = otPolicy.regularDayMultiplier;
-
-    const otSubunits = BigInt(Math.round(Number(hourlySubunits) * (input.overtimeMinutes / 60) * multiplier));
-    const overtimeM = Money.fromSubunits(otSubunits, curr);
+    const hourlyRateM = basicM.divide(otPolicy.hourlyBaseDivisor);
+    const otHoursDec = new Decimal(input.overtimeMinutes).dividedBy(60);
+    const multiplierDec = new Decimal(otPolicy.regularDayMultiplier.toString());
+    const overtimeM = hourlyRateM.multiply(otHoursDec.times(multiplierDec));
 
     if (overtimeM.toSubunits() > 0n) {
       resultLines.push({
         componentCode: 'OVERTIME',
         componentName: 'Approved Overtime / العمل الإضافي المعتمد',
         lineType: 'EARNING',
-        quantity: `${otHours} hrs`,
-        rate: Money.fromSubunits(hourlySubunits, curr).toDecimalString(),
+        quantity: `${otHoursDec.toFixed(2)} hrs`,
+        rate: hourlyRateM.toDecimalString(),
         amount: overtimeM.toDecimalString(),
         sourceType: 'OVERTIME',
-        calculationRuleReference: `${otPolicy.sourceReference} (${multiplier}x regular rate)`,
+        calculationRuleReference: `${otPolicy.sourceReference} (${otPolicy.regularDayMultiplier}x regular rate)`,
         displayOrder: order++,
       });
     }
@@ -244,9 +244,8 @@ export class PayrollCalculator {
     const grossM = regularPackageM.add(overtimeM).add(adjustmentAdditionsM);
 
     // 4. Unpaid Leave Deduction (Daily Rate = Basic Salary / 30)
-    const dailySubunits = basicM.toSubunits() / 30n;
-    const unpaidSubunits = dailySubunits * BigInt(input.unpaidLeaveDays);
-    const unpaidDeductionM = Money.fromSubunits(unpaidSubunits, curr);
+    const dailyRateM = basicM.divide(30);
+    const unpaidDeductionM = dailyRateM.multiply(input.unpaidLeaveDays);
 
     if (unpaidDeductionM.toSubunits() > 0n) {
       resultLines.push({
@@ -254,7 +253,7 @@ export class PayrollCalculator {
         componentName: 'Unpaid Absence Deduction / استقطاع غياب وإجازات غير مدفوعة',
         lineType: 'DEDUCTION',
         quantity: `${input.unpaidLeaveDays} days`,
-        rate: Money.fromSubunits(dailySubunits, curr).toDecimalString(),
+        rate: dailyRateM.toDecimalString(),
         amount: unpaidDeductionM.toDecimalString(),
         sourceType: 'LEAVE',
         calculationRuleReference: '30-day statutory calendar day divisor (Basic / 30)',
@@ -333,7 +332,7 @@ export class PayrollCalculator {
       transportAllowance: transportM.toDecimalString(),
       otherAllowances: otherM.toDecimalString(),
       overtimeAmount: overtimeM.toDecimalString(),
-      overtimeHours: otHours,
+      overtimeHours: otHoursDec.toFixed(2),
       unpaidLeaveDeduction: unpaidDeductionM.toDecimalString(),
       unpaidLeaveDays: input.unpaidLeaveDays,
       loanDeduction: loanDeductionM.toDecimalString(),
@@ -355,15 +354,15 @@ export class PayrollCalculator {
         },
         overtime: {
           minutes: input.overtimeMinutes,
-          hours: otHours,
-          hourlyRate: Money.fromSubunits(hourlySubunits, curr).toDecimalString(),
-          multiplier: `${multiplier}x`,
+          hours: otHoursDec.toFixed(2),
+          hourlyRate: hourlyRateM.toDecimalString(),
+          multiplier: `${otPolicy.regularDayMultiplier}x`,
           total: overtimeM.toDecimalString(),
-          rule: `${otPolicy.sourceReference}: ${multiplier}x basic rate`,
+          rule: `${otPolicy.sourceReference}: ${otPolicy.regularDayMultiplier}x basic rate`,
         },
         leaveDeductions: {
           unpaidDays: input.unpaidLeaveDays,
-          dailyRate: Money.fromSubunits(dailySubunits, curr).toDecimalString(),
+          dailyRate: dailyRateM.toDecimalString(),
           deductionAmount: unpaidDeductionM.toDecimalString(),
         },
         loans: {

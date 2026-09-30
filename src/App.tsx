@@ -9,6 +9,7 @@ import { I18nProvider, useI18n } from './shared/i18n/I18nContext.tsx';
 import { ToastProvider, LayoutProvider, AppShell, Button, Input, Select, useToast, LoadingState } from './design-system/index.ts';
 import { Money, SUPPORTED_CURRENCIES } from './core/domain/money.ts';
 import { GULFHIVE_MODULES } from './modules/module.manifest.ts';
+import { apiClient } from './lib/api-client.ts';
 import { FirstRunWizard } from './components/FirstRunWizard.tsx';
 import { CompanyManagement } from './components/CompanyManagement.tsx';
 import { PeopleModule } from './modules/people/PeopleModule.tsx';
@@ -58,9 +59,8 @@ function MainWorkspace() {
 
   const fetchSetupStatus = async () => {
     try {
-      const res = await fetch('/api/system/setup-status');
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiClient.get('/api/system/setup-status');
+      if (data) {
         setSetupStatus(data);
         if (data.activeTenant) {
           setActiveCompany(data.activeTenant);
@@ -77,9 +77,8 @@ function MainWorkspace() {
 
   const fetchCompanyBranches = async (tenantId: string) => {
     try {
-      const res = await fetch(`/api/companies/${tenantId}/branches`);
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiClient.get(`/api/companies/${tenantId}/branches`);
+      if (data) {
         setCompanyBranches(data.branches || []);
         if (data.branches?.length > 0) {
           const main = data.branches.find((b: any) => b.isMain) || data.branches[0];

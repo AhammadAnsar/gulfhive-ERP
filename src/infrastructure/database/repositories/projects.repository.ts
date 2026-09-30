@@ -340,6 +340,14 @@ export class ProjectsRepository {
   ) {
     const code = input.projectCode.toUpperCase().trim();
 
+    // Cross-company relational check
+    if (input.clientId) {
+      const [cCheck] = await db.select().from(clients).where(and(eq(clients.id, input.clientId), eq(clients.tenantId, tenantId))).limit(1);
+      if (!cCheck) {
+        throw new Error('Cross-company reference violation: Client does not belong to the active company.');
+      }
+    }
+
     // Verify unique project code
     const existing = await db
       .select()
@@ -349,6 +357,20 @@ export class ProjectsRepository {
 
     if (existing.length > 0) {
       throw new Error(`Project code '${code}' already exists.`);
+    }
+
+    // Look up party IDs for Client and Principal Supplier
+    let clientPartyId: number | null = null;
+    let principalPartyId: number | null = null;
+
+    if (input.clientId) {
+      const [c] = await db.select({ partyId: clients.partyId }).from(clients).where(eq(clients.id, input.clientId)).limit(1);
+      if (c?.partyId) clientPartyId = c.partyId;
+    }
+
+    if (input.principalSupplierId) {
+      const [s] = await db.select({ partyId: suppliers.partyId }).from(suppliers).where(eq(suppliers.id, input.principalSupplierId)).limit(1);
+      if (s?.partyId) principalPartyId = s.partyId;
     }
 
     const [created] = await db
@@ -361,6 +383,8 @@ export class ProjectsRepository {
         projectType: input.projectType || 'General Contract',
         clientId: input.clientId,
         principalSupplierId: input.principalSupplierId || null,
+        principalPartyId,
+        clientPartyId,
         billingProfileId: input.billingProfileId,
         contractReference: input.contractReference?.trim() || null,
         principalReference: input.principalReference?.trim() || null,
@@ -652,12 +676,19 @@ export class ProjectsRepository {
   ) {
     const code = input.workerCode.toUpperCase().trim();
 
+    let sourcePartyId: number | null = null;
+    if (input.sourceSupplierId) {
+      const [s] = await db.select({ partyId: suppliers.partyId }).from(suppliers).where(eq(suppliers.id, input.sourceSupplierId)).limit(1);
+      if (s?.partyId) sourcePartyId = s.partyId;
+    }
+
     const [created] = await db
       .insert(externalWorkers)
       .values({
         tenantId,
         workerCode: code,
         sourceSupplierId: input.sourceSupplierId,
+        sourcePartyId,
         nameEn: input.nameEn.trim(),
         nameAr: input.nameAr?.trim() || null,
         nationalityId: input.nationalityId || null,
@@ -875,6 +906,19 @@ export class ProjectsRepository {
     }
     if (input.workforceType === 'EXTERNAL_WORKER' && !input.externalWorkerId) {
       throw new Error('External Worker ID is required for external worker deployment.');
+    }
+
+    // Cross-company relational checks
+    const [pCheck] = await db.select().from(projects).where(and(eq(projects.id, input.projectId), eq(projects.tenantId, tenantId))).limit(1);
+    if (!pCheck) {
+      throw new Error('Cross-company reference violation: Project does not belong to the active company.');
+    }
+
+    if (input.workforceType === 'EXTERNAL_WORKER' && input.externalWorkerId) {
+      const [wCheck] = await db.select().from(externalWorkers).where(and(eq(externalWorkers.id, input.externalWorkerId), eq(externalWorkers.tenantId, tenantId))).limit(1);
+      if (!wCheck) {
+        throw new Error('Cross-company reference violation: External worker does not belong to the active company.');
+      }
     }
 
     const [created] = await db

@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
+  "name": "gulfhive-erp",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -9,8 +9,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run tests/money.spec.ts tests/result.spec.ts tests/aggregate-root.spec.ts tests/event-bus.spec.ts tests/i18n.spec.ts tests/dashboard.spec.ts",
+    "test:integration": "vitest run tests/first-run-setup.spec.ts tests/people-employee.spec.ts tests/employee-bulk-delete.spec.ts tests/time.spec.ts tests/payroll.spec.ts tests/procurement.spec.ts tests/client-hardening.spec.ts tests/party-architecture.spec.ts tests/phase5-compliance-payroll.spec.ts tests/phase6-runtime-storage-backup.spec.ts tests/no-dummy-data-safety-gate.spec.ts",
+    "verify:migrations": "tsx src/infrastructure/database/migrations/migration-runner.ts",
+    "verify": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -1781,11 +1781,96 @@ export const userTenantsRelations = relations(userTenants, ({ one }) => ({
 }));
 
 /**
+ * 39. Parties Master Table (Unified Party Architecture)
+ * Single authoritative legal entity record across Client, Supplier, Principal Contractor, and Workforce Supplier roles.
+ */
+export const parties = pgTable('parties', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyNumber: varchar('party_number', { length: 64 }).notNull(),
+  partyType: varchar('party_type', { length: 32 }).notNull().default('ORGANIZATION'), // ORGANIZATION, INDIVIDUAL
+  legalNameEn: text('legal_name_en').notNull(),
+  legalNameAr: text('legal_name_ar').notNull(),
+  tradeNameEn: text('trade_name_en'),
+  tradeNameAr: text('trade_name_ar'),
+  countryCode: varchar('country_code', { length: 2 }).notNull().default('KW'),
+  crNumber: text('cr_number'),
+  taxNumber: text('tax_number'),
+  licenseNumber: text('license_number'),
+  primaryContactName: text('primary_contact_name'),
+  phone: varchar('phone', { length: 32 }),
+  email: text('email'),
+  website: text('website'),
+  addressEn: text('address_en'),
+  addressAr: text('address_ar'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // ACTIVE, INACTIVE, SUSPENDED, DELETED
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 39b. Party Roles Table
+ */
+export const partyRoles = pgTable('party_roles', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').notNull().references(() => parties.id, { onDelete: 'cascade' }),
+  roleType: varchar('role_type', { length: 64 }).notNull(), // CLIENT, SUPPLIER, PRINCIPAL_CONTRACTOR, WORKFORCE_SUPPLIER
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 39c. Client Profiles Table
+ */
+export const clientProfiles = pgTable('client_profiles', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').notNull().references(() => parties.id, { onDelete: 'cascade' }),
+  creditLimit: text('credit_limit').default('0.000'),
+  paymentTermsDays: integer('payment_terms_days').default(30),
+  paymentTermsId: varchar('payment_terms_id', { length: 64 }),
+  billingCurrency: varchar('billing_currency', { length: 3 }).default('KWD').notNull(),
+  salesPersonId: text('sales_person_id'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 39d. Supplier Profiles Table
+ */
+export const supplierProfiles = pgTable('supplier_profiles', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').notNull().references(() => parties.id, { onDelete: 'cascade' }),
+  paymentTermsDays: integer('payment_terms_days').default(30),
+  paymentTermsId: varchar('payment_terms_id', { length: 64 }).default('30 Days'),
+  purchaseCurrency: varchar('purchase_currency', { length: 3 }).default('KWD').notNull(),
+  bankName: text('bank_name'),
+  bankIban: text('bank_iban'),
+  bankSwift: text('bank_swift'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
  * 40. Clients (Customers) Table
  */
 export const clients = pgTable('clients', {
   id: serial('id').primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').references(() => parties.id, { onDelete: 'set null' }),
   code: varchar('code', { length: 32 }).notNull(),
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar').notNull(),
@@ -1998,6 +2083,7 @@ export const deliveryLines = pgTable('delivery_lines', {
 export const invoices = pgTable('invoices', {
   id: serial('id').primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').references(() => parties.id, { onDelete: 'set null' }),
   branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
   invoiceNumber: varchar('invoice_number', { length: 64 }).notNull(),
   clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
@@ -2151,6 +2237,7 @@ export const receiptAllocations = pgTable('receipt_allocations', {
 export const suppliers = pgTable('suppliers', {
   id: serial('id').primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').references(() => parties.id, { onDelete: 'set null' }),
   code: varchar('code', { length: 32 }).notNull(),
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar').notNull(),
@@ -2427,6 +2514,7 @@ export const purchaseReturnLines = pgTable('purchase_return_lines', {
 export const supplierBills = pgTable('supplier_bills', {
   id: serial('id').primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').references(() => parties.id, { onDelete: 'set null' }),
   branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
   billNumber: varchar('bill_number', { length: 64 }).notNull(),
   supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
@@ -2549,6 +2637,8 @@ export const supplierPaymentAllocations = pgTable('supplier_payment_allocations'
 export const billingProfiles = pgTable('billing_profiles', {
   id: serial('id').primaryKey(),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  partyId: integer('party_id').references(() => parties.id, { onDelete: 'set null' }),
+  principalPartyId: integer('principal_party_id').references(() => parties.id, { onDelete: 'set null' }),
   profileCode: varchar('profile_code', { length: 64 }).notNull(),
   profileName: varchar('profile_name', { length: 255 }).notNull(),
   isOperatingCompany: boolean('is_operating_company').notNull().default(false),
@@ -2616,6 +2706,8 @@ export const projects = pgTable('projects', {
   projectType: varchar('project_type', { length: 64 }).notNull().default('General Contract'), // General Contract, Subcontract, Construction, Cleaning, Maintenance, Labour Supply, Service
   clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
   principalSupplierId: integer('principal_supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
+  principalPartyId: integer('principal_party_id').references(() => parties.id, { onDelete: 'set null' }),
+  clientPartyId: integer('client_party_id').references(() => parties.id, { onDelete: 'set null' }),
   billingProfileId: integer('billing_profile_id').notNull().references(() => billingProfiles.id, { onDelete: 'restrict' }),
   contractReference: varchar('contract_reference', { length: 128 }),
   principalReference: varchar('principal_reference', { length: 128 }),
@@ -2723,6 +2815,7 @@ export const externalWorkers = pgTable('external_workers', {
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   workerCode: varchar('worker_code', { length: 64 }).notNull(),
   sourceSupplierId: integer('source_supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  sourcePartyId: integer('source_party_id').references(() => parties.id, { onDelete: 'set null' }),
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar'),
   nationalityId: integer('nationality_id').references(() => nationalities.id, { onDelete: 'set null' }),

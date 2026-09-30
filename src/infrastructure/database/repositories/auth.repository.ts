@@ -3,7 +3,7 @@
  * Centralized RBAC, Data Scopes, Sessions, and Multi-Company / Multi-Branch Security Engine.
  */
 
-import { eq, and, sql, desc, inArray, asc } from 'drizzle-orm';
+import { eq, and, or, sql, desc, inArray, asc } from 'drizzle-orm';
 import crypto from 'crypto';
 import { db } from '../../../db/index.ts';
 import {
@@ -120,8 +120,8 @@ export class AuthRepository {
     if (u.passwordHash) {
       isPasswordValid = this.verifyPassword(passwordAttempt, u.passwordHash);
     } else {
-      // Temporary fallback for initial seed accounts
-      isPasswordValid = passwordAttempt === 'Password@123' || passwordAttempt === 'Admin@123';
+      // Production security: accounts without hashed credentials must not authenticate
+      isPasswordValid = false;
     }
 
     if (!isPasswordValid) {
@@ -172,11 +172,32 @@ export class AuthRepository {
       expiresAt,
     });
 
-    const activeCompanyId = u.tenantId || 'tenant_corp_01_1790702844962';
+    const activeCompanyId = u.tenantId || (await this.getFirstAuthorizedCompanyId(u.id)) || '';
     const authCtx = await this.getAuthorizationContext(u.id, activeCompanyId, u.defaultBranchId || undefined);
 
     const token = `${sessionId}:${tokenSecret}`;
     return { token, user: authCtx };
+  }
+
+  public async getFirstAuthorizedCompanyId(userId: number): Promise<string | null> {
+    const [access] = await db
+      .select({ companyId: userCompanyAccess.companyId })
+      .from(userCompanyAccess)
+      .where(and(eq(userCompanyAccess.userId, userId), eq(userCompanyAccess.status, 'ACTIVE')))
+      .limit(1);
+    return access ? access.companyId : null;
+  }
+
+  public async getAuthorizationContextByUidOrEmail(uid: string, email?: string, requestedCompanyId?: string): Promise<AuthContext | null> {
+    const conditions = [eq(users.uid, uid)];
+    if (email) {
+      conditions.push(sql`LOWER(${users.email}) = LOWER(${email})`);
+    }
+    const [u] = await db.select().from(users).where(or(...conditions)!).limit(1);
+    if (!u || u.status === 'DISABLED' || !u.isActive) return null;
+
+    const companyId = requestedCompanyId || u.tenantId || (await this.getFirstAuthorizedCompanyId(u.id)) || '';
+    return this.getAuthorizationContext(u.id, companyId, u.defaultBranchId || undefined);
   }
 
   public async verifySessionToken(tokenString: string): Promise<AuthContext | null> {
@@ -210,7 +231,7 @@ export class AuthRepository {
     const [u] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
     if (!u || u.status === 'DISABLED' || !u.isActive) return null;
 
-    const companyId = u.tenantId || 'tenant_corp_01_1790702844962';
+    const companyId = u.tenantId || (await this.getFirstAuthorizedCompanyId(u.id)) || '';
     return this.getAuthorizationContext(u.id, companyId, u.defaultBranchId || undefined);
   }
 
@@ -405,7 +426,7 @@ export class AuthRepository {
     };
   }
 
-  // Permission check helper
+  // Permission check helper with support for dot-notation and uppercase dot/colon aliases
   public can(authCtx: AuthContext, requiredPermission: string, requiredCompanyId?: string): boolean {
     if (!authCtx) return false;
     if (requiredCompanyId && !authCtx.authorizedCompanyIds.includes(requiredCompanyId)) {
@@ -414,7 +435,29 @@ export class AuthRepository {
     if (authCtx.roles.includes('COMPANY_ADMIN') || authCtx.roles.includes('SUPER_ADMIN')) {
       return true;
     }
-    return authCtx.permissions.includes(requiredPermission);
+
+    const norm = (p: string) => p.toLowerCase().replace(/_/g, '.').replace(/\s+/g, '');
+    const targetNorm = norm(requiredPermission);
+
+    // Permission alias mapping
+    const aliasMap: Record<string, string[]> = {
+      'employee.salary.view': ['people.salary.view'],
+      'people.salary.view': ['employee.salary.view'],
+      'employee.bank.view': ['people.bank.view'],
+      'people.bank.view': ['employee.bank.view'],
+      'employee.identity.view': ['people.identity.view'],
+      'people.identity.view': ['employee.identity.view'],
+      'employee.document.viewsensitive': ['people.document.view_sensitive', 'people.document.viewsensitive'],
+      'people.document.view_sensitive': ['employee.document.viewsensitive', 'employee.document.view_sensitive'],
+      'employee.view': ['people.view'],
+      'people.view': ['employee.view'],
+      'employee.manage': ['people.manage'],
+      'people.manage': ['employee.manage'],
+    };
+
+    const targetsToCheck = [targetNorm, ...(aliasMap[targetNorm] || []).map(norm)];
+
+    return authCtx.permissions.some((p) => targetsToCheck.includes(norm(p)));
   }
 
   // ==========================================

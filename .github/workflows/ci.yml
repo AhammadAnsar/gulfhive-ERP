@@ -1,0 +1,65 @@
+name: GulfHive ERP CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: gulfhive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js Environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Code Linter
+        run: npm run lint
+
+      - name: Database Migration Verification
+        env:
+          SQL_HOST: localhost
+          SQL_USER: postgres
+          SQL_PASSWORD: postgrespassword
+          SQL_DB_NAME: gulfhive_test
+        run: npm run verify:migrations
+
+      - name: Run Test Suite (Unit, Integration, Security, DR, E2E)
+        env:
+          SQL_HOST: localhost
+          SQL_USER: postgres
+          SQL_PASSWORD: postgrespassword
+          SQL_DB_NAME: gulfhive_test
+          ALLOW_DEV_AUTH_BYPASS: "false"
+        run: npm run test
+
+      - name: Build Production Assets
+        run: npm run build

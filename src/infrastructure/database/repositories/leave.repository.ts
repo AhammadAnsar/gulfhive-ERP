@@ -222,6 +222,22 @@ export class LeaveRepository {
     return parseFloat(result[0]?.total || '0');
   }
 
+  public async getEmployeeLeaveBalances(tenantId: string, employeeId: string, asOfDate?: string) {
+    const types = await this.listLeaveTypes(tenantId);
+    const result = [];
+    for (const t of types) {
+      const balance = await this.getEmployeeLeaveBalance(tenantId, employeeId, t.id);
+      result.push({
+        leaveTypeId: t.id,
+        leaveTypeCode: t.code,
+        leaveTypeNameEn: t.nameEn,
+        leaveTypeNameAr: t.nameAr,
+        balance,
+      });
+    }
+    return result;
+  }
+
   public async listEmployeeLedger(tenantId: string, employeeId: string, leaveTypeId?: string) {
     const conditions = [eq(leaveLedger.tenantId, tenantId), eq(leaveLedger.employeeId, employeeId)];
     if (leaveTypeId) conditions.push(eq(leaveLedger.leaveTypeId, leaveTypeId));

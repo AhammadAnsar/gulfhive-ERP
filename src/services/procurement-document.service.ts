@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
+import { registerArabicFonts } from './pdf-font-helper';
 
 export class ProcurementDocumentService {
   /**
@@ -9,6 +10,7 @@ export class ProcurementDocumentService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -23,6 +25,7 @@ export class ProcurementDocumentService {
           .text(po.supplier?.tenantNameEn || 'GULFHIVE PROCUREMENT', 55, 50);
         doc.fillColor('#F59E0B')
           .fontSize(11)
+          .font('Amiri-Bold')
           .text('PURCHASE ORDER / امر شراء', 55, 75);
 
         // --- Document Details ---
@@ -35,7 +38,7 @@ export class ProcurementDocumentService {
 
         // --- Supplier & Company Info Grid ---
         const startY = doc.y;
-        doc.font('Helvetica-Bold').fontSize(10).fillColor('#0F172A');
+        doc.font('Amiri-Bold').fontSize(10).fillColor('#0F172A');
         doc.text('SUPPLIER / المورد', 40, startY);
         doc.text('SHIP TO / شحن إلى', 300, startY);
 
@@ -53,7 +56,7 @@ export class ProcurementDocumentService {
         // --- Table Headers ---
         const tableY = doc.y + 15;
         doc.rect(40, tableY, 515, 20).fill('#1E293B');
-        doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8.5);
+        doc.fillColor('#FFFFFF').font('Amiri-Bold').fontSize(8.5);
         doc.text('Description / الوصف', 45, tableY + 6);
         doc.text('Qty / الكمية', 280, tableY + 6, { width: 50, align: 'right' });
         doc.text('Price / السعر', 350, tableY + 6, { width: 60, align: 'right' });
@@ -90,14 +93,14 @@ export class ProcurementDocumentService {
         doc.text('Discount / الخصم:', 350, currentY + 40);
         doc.text(parseFloat(po.discountTotal || '0').toFixed(3), 440, currentY + 40, { width: 105, align: 'right' });
 
-        doc.fillColor('#0F172A').font('Helvetica-Bold').fontSize(9);
+        doc.fillColor('#0F172A').font('Amiri-Bold').fontSize(9);
         doc.text('Grand Total / الاجمالي:', 350, currentY + 55);
         doc.text(`${parseFloat(po.grandTotal).toFixed(3)} ${currency}`, 440, currentY + 55, { width: 105, align: 'right' });
 
         // --- Notes & Signatures ---
         if (po.notes) {
           doc.moveDown(6);
-          doc.font('Helvetica-Bold').fontSize(8).fillColor('#475569').text('Terms & Notes / ملاحظات و شروط:');
+          doc.font('Amiri-Bold').fontSize(8).fillColor('#475569').text('Terms & Notes / ملاحظات و شروط:');
           doc.font('Helvetica').fontSize(8).fillColor('#64748B').text(po.notes);
         }
 
@@ -115,6 +118,7 @@ export class ProcurementDocumentService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -129,6 +133,7 @@ export class ProcurementDocumentService {
           .text(pay.supplier?.tenantNameEn || 'GULFHIVE ERP SYSTEM', 55, 50);
         doc.fillColor('#10B981')
           .fontSize(11)
+          .font('Amiri-Bold')
           .text('PAYMENT VOUCHER / سند صرف دفعات', 55, 75);
 
         // --- Document Details ---
@@ -141,7 +146,7 @@ export class ProcurementDocumentService {
 
         // --- Supplier Info ---
         const startY = doc.y;
-        doc.font('Helvetica-Bold').fontSize(10).fillColor('#0F172A');
+        doc.font('Amiri-Bold').fontSize(10).fillColor('#0F172A');
         doc.text('SUPPLIER DETAILS / تفاصيل المورد', 40, startY);
 
         doc.font('Helvetica').fontSize(9).fillColor('#475569');
@@ -155,7 +160,7 @@ export class ProcurementDocumentService {
         // --- Payment Amount Summary ---
         const summaryY = doc.y + 10;
         doc.rect(40, summaryY, 515, 30).fill('#ECFDF5');
-        doc.fillColor('#047857').font('Helvetica-Bold').fontSize(11);
+        doc.fillColor('#047857').font('Amiri-Bold').fontSize(11);
         doc.text(`TOTAL AMOUNT PAID / المبلغ المدفوع:  ${parseFloat(pay.amount).toFixed(3)} ${currency}`, 55, summaryY + 10);
 
         doc.moveDown(4);
@@ -164,7 +169,7 @@ export class ProcurementDocumentService {
         if (pay.allocations && pay.allocations.length > 0) {
           const tableY = doc.y + 15;
           doc.rect(40, tableY, 515, 20).fill('#1E293B');
-          doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8.5);
+          doc.fillColor('#FFFFFF').font('Amiri-Bold').fontSize(8.5);
           doc.text('Allocated Document / المستند المخصص', 45, tableY + 6);
           doc.text('Allocation Date / تاريخ التخصيص', 250, tableY + 6);
           doc.text(`Allocated Amount / قيمة التخصيص (${currency})`, 420, tableY + 6, { width: 130, align: 'right' });
@@ -186,7 +191,7 @@ export class ProcurementDocumentService {
         // --- Footer signatures ---
         const footerY = 700;
         doc.strokeColor('#E2E8F0').moveTo(40, footerY).lineTo(555, footerY).stroke();
-        doc.font('Helvetica-Bold').fontSize(8).fillColor('#64748B');
+        doc.font('Amiri-Bold').fontSize(8).fillColor('#64748B');
         doc.text('PREPARED BY / تم الإعداد بواسطة', 60, footerY + 15);
         doc.text('APPROVED BY / تم الاعتماد بواسطة', 400, footerY + 15, { align: 'right' });
 
@@ -204,6 +209,7 @@ export class ProcurementDocumentService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -218,6 +224,7 @@ export class ProcurementDocumentService {
           .text(stmt.supplier?.tenantNameEn || 'GULFHIVE PORTAL', 55, 50);
         doc.fillColor('#F59E0B')
           .fontSize(11)
+          .font('Amiri-Bold')
           .text('SUPPLIER STATEMENT OF ACCOUNT / كشف حساب المورد', 55, 75);
 
         // --- Document Details ---
@@ -230,7 +237,7 @@ export class ProcurementDocumentService {
         // --- Summary Grid ---
         const startY = doc.y;
         doc.rect(40, startY, 515, 40).fill('#F8FAFC');
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#334155');
+        doc.font('Amiri-Bold').fontSize(9).fillColor('#334155');
         doc.text('Opening Balance / الرصيد الافتتاحي', 50, startY + 15);
         doc.text(parseFloat(stmt.openingBalance).toFixed(3), 190, startY + 15, { width: 80, align: 'right' });
 

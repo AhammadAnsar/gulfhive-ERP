@@ -213,38 +213,72 @@ export class Money extends ValueObject<MoneyProps> {
   }
 
   /**
-   * Safe financial allocation across multiple ratios (e.g., tax distribution, cost centers).
-   * Ensures sum(allocated) === original total down to the single smallest subunit.
+   * Deterministic largest-remainder allocation algorithm with exact total subunit preservation.
+   * Supports number, string, or Decimal weights.
+   * Handles 3-decimal currencies (e.g. KWD, BHD, OMR) and 2-decimal currencies (e.g. SAR, AED).
+   * Tie-break rules: largest remainder -> largest weight -> original array index.
    */
-  public allocate(ratios: number[]): Money[] {
+  public allocate(ratios: Array<number | string | Decimal>): Money[] {
     if (ratios.length === 0) {
       return [];
     }
-    const totalRatio = ratios.reduce((sum, r) => sum + r, 0);
-    if (totalRatio <= 0) {
-      throw new Error('Total ratio must be positive for allocation');
+
+    const weights = ratios.map((r) => new Decimal(r.toString()));
+
+    if (weights.some((w) => w.isNegative())) {
+      throw new Error('Allocation weights cannot be negative');
+    }
+
+    const totalWeight = weights.reduce((sum, w) => sum.plus(w), new Decimal(0));
+    if (totalWeight.isZero()) {
+      throw new Error('Total weight must be positive for allocation');
     }
 
     const totalSubunits = this.toSubunits();
     const isNegative = totalSubunits < 0n;
     const absSubunits = isNegative ? -totalSubunits : totalSubunits;
+    const absSubunitsDec = new Decimal(absSubunits.toString());
 
-    const shares: bigint[] = [];
-    let remainder = absSubunits;
+    const floorShares: bigint[] = [];
+    const remainders: { index: number; remainder: Decimal; weight: Decimal }[] = [];
+    let allocatedSum = 0n;
 
-    for (const ratio of ratios) {
-      const share = (absSubunits * BigInt(Math.floor(ratio * 1000000))) / BigInt(Math.floor(totalRatio * 1000000));
-      shares.push(share);
-      remainder -= share;
+    for (let i = 0; i < weights.length; i++) {
+      const weight = weights[i];
+      if (weight.isZero()) {
+        floorShares.push(0n);
+        remainders.push({ index: i, remainder: new Decimal(0), weight });
+        continue;
+      }
+
+      const exactShare = absSubunitsDec.times(weight).dividedBy(totalWeight);
+      const floorShare = BigInt(exactShare.floor().toFixed(0));
+      const rem = exactShare.minus(new Decimal(floorShare.toString()));
+
+      floorShares.push(floorShare);
+      allocatedSum += floorShare;
+      remainders.push({ index: i, remainder: rem, weight });
     }
 
-    // Distribute remainder 1 subunit at a time to highest ratios
-    for (let i = 0; remainder > 0n; i = (i + 1) % ratios.length) {
-      shares[i] += 1n;
-      remainder -= 1n;
+    let unallocatedSubunits = absSubunits - allocatedSum;
+
+    // Sort remainders: largest remainder desc, then largest weight desc, then original index asc
+    remainders.sort((a, b) => {
+      const remDiff = b.remainder.minus(a.remainder);
+      if (!remDiff.isZero()) return remDiff.isPositive() ? 1 : -1;
+
+      const weightDiff = b.weight.minus(a.weight);
+      if (!weightDiff.isZero()) return weightDiff.isPositive() ? 1 : -1;
+
+      return a.index - b.index;
+    });
+
+    for (let i = 0; i < Number(unallocatedSubunits); i++) {
+      const targetIndex = remainders[i % remainders.length].index;
+      floorShares[targetIndex] += 1n;
     }
 
-    return shares.map((s) => {
+    return floorShares.map((s) => {
       const signed = isNegative ? -s : s;
       return Money.fromSubunits(signed, this.currency);
     });

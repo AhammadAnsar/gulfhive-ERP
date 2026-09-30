@@ -34,6 +34,24 @@ export interface ClockEventRecord {
   isDuplicate?: boolean;
 }
 
+export interface TimePolicy {
+  policyVersion: string;
+  excessiveHoursThresholdMinutes: number; // e.g. 720 (12 hours)
+  partialDayRatioThreshold: number; // e.g. 0.5 (50% of shift)
+  defaultGraceInMinutes: number; // e.g. 15
+  defaultGraceOutMinutes: number; // e.g. 15
+  minOvertimeCandidateThresholdMinutes: number; // e.g. 15
+}
+
+export const DEFAULT_TIME_POLICY: TimePolicy = {
+  policyVersion: 'GCC-TIME-2026.1',
+  excessiveHoursThresholdMinutes: 720,
+  partialDayRatioThreshold: 0.5,
+  defaultGraceInMinutes: 15,
+  defaultGraceOutMinutes: 15,
+  minOvertimeCandidateThresholdMinutes: 15,
+};
+
 export interface ProcessAttendanceParams {
   employeeId: string;
   workDate: string; // "YYYY-MM-DD"
@@ -43,6 +61,7 @@ export interface ProcessAttendanceParams {
   isHoliday?: boolean;
   isRestDay?: boolean;
   hasApprovedLeave?: boolean;
+  timePolicy?: TimePolicy;
 }
 
 export interface AttendanceProcessingResult {
@@ -354,12 +373,14 @@ export class AttendanceProcessorService {
       overtimeCandidateMinutes = workedMinutes;
     }
 
-    // 10. Excessive hours flag (> 12 hours)
-    if (workedMinutes > 720) {
+    const policy = params.timePolicy || DEFAULT_TIME_POLICY;
+
+    // 10. Excessive hours flag (policy driven, e.g. > 12 hours)
+    if (workedMinutes > policy.excessiveHoursThresholdMinutes) {
       exceptions.push({
         exceptionType: 'EXCESSIVE_HOURS',
         severity: 'HIGH',
-        description: `Employee worked ${workedMinutes} minutes (${(workedMinutes / 60).toFixed(1)}h), exceeding daily safety limit.`,
+        description: `Employee worked ${workedMinutes} minutes (${(workedMinutes / 60).toFixed(1)}h), exceeding daily safety limit of ${policy.excessiveHoursThresholdMinutes}m.`,
       });
     }
 
@@ -367,7 +388,7 @@ export class AttendanceProcessorService {
     let status: AttendanceProcessingResult['status'] = 'PRESENT';
     if (lateMinutes > 0) {
       status = 'LATE';
-    } else if (workedMinutes < (scheduledMinutes * 0.5)) {
+    } else if (workedMinutes < (scheduledMinutes * policy.partialDayRatioThreshold)) {
       status = 'PARTIAL';
     }
 

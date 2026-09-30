@@ -5,6 +5,7 @@
  */
 
 import PDFDocument from 'pdfkit';
+import { registerArabicFonts } from '../pdf-font-helper';
 
 export interface PayslipPdfData {
   companyNameEn: string;
@@ -52,6 +53,7 @@ export class PayslipPdfService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
 
         doc.on('data', (chunk) => buffers.push(chunk));
@@ -74,6 +76,7 @@ export class PayslipPdfService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: false });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
 
         doc.on('data', (chunk) => buffers.push(chunk));
@@ -105,7 +108,7 @@ export class PayslipPdfService {
       .text(data.companyNameEn.toUpperCase(), margin + 16, margin + 12);
 
     doc.fontSize(9)
-      .font('Helvetica')
+      .font('Amiri')
       .fillColor('#94A3B8')
       .text(
         `OFFICIAL SALARY PAYSLIP / قسيمة الراتب الرسمية — PERIOD: ${data.periodYear}-${String(data.periodMonth).padStart(2, '0')}`,
@@ -123,7 +126,7 @@ export class PayslipPdfService {
     const infoY = margin + 66;
     doc.rect(margin, infoY, contentWidth, 70).fillAndStroke('#F8FAFC', '#E2E8F0');
 
-    doc.fillColor('#334155').fontSize(8).font('Helvetica-Bold');
+    doc.fillColor('#334155').fontSize(8).font('Amiri-Bold');
     doc.text('EMPLOYEE NUMBER / الرقم الوظيفي:', margin + 16, infoY + 12);
     doc.text('NAME / الاسم:', margin + 16, infoY + 28);
     doc.text('DEPARTMENT / القسم:', margin + 16, infoY + 44);
@@ -134,7 +137,7 @@ export class PayslipPdfService {
     doc.text(data.departmentName || 'General Operations', margin + 160, infoY + 44);
 
     const col2X = margin + contentWidth / 2 + 10;
-    doc.fillColor('#334155').font('Helvetica-Bold');
+    doc.fillColor('#334155').font('Amiri-Bold');
     doc.text('CURRENCY / العملة:', col2X, infoY + 12);
     doc.text('DESIGNATION / المسمى:', col2X, infoY + 28);
     doc.text('BANK & IBAN / الحساب البنكي:', col2X, infoY + 44);
@@ -151,11 +154,11 @@ export class PayslipPdfService {
 
     // Left Box: Earnings
     doc.rect(margin, tableY, halfWidth, 24).fill('#0F172A');
-    doc.fillColor('#FFFFFF').fontSize(9).font('Helvetica-Bold').text('EARNINGS / المستحقات', margin + 12, tableY + 7);
+    doc.fillColor('#FFFFFF').fontSize(9).font('Amiri-Bold').text('EARNINGS / المستحقات', margin + 12, tableY + 7);
 
     // Right Box: Deductions
     doc.rect(margin + halfWidth + 10, tableY, halfWidth, 24).fill('#0F172A');
-    doc.fillColor('#FFFFFF').fontSize(9).font('Helvetica-Bold').text('DEDUCTIONS / الاستقطاعات', margin + halfWidth + 22, tableY + 7);
+    doc.fillColor('#FFFFFF').fontSize(9).font('Amiri-Bold').text('DEDUCTIONS / الاستقطاعات', margin + halfWidth + 22, tableY + 7);
 
     // Earnings list
     const earnings: Array<{ label: string; amount: string }> = [
@@ -190,13 +193,13 @@ export class PayslipPdfService {
 
       // Earning line
       if (i < earnings.length) {
-        doc.fillColor('#334155').fontSize(8).font('Helvetica').text(earnings[i].label, margin + 8, curY + 6);
+        doc.fillColor('#334155').fontSize(8).font('Amiri').text(earnings[i].label, margin + 8, curY + 6);
         doc.fillColor('#0F172A').font('Helvetica-Bold').text(earnings[i].amount, margin + halfWidth - 70, curY + 6, { width: 62, align: 'right' });
       }
 
       // Deduction line
       if (i < deductions.length) {
-        doc.fillColor('#334155').fontSize(8).font('Helvetica').text(deductions[i].label, margin + halfWidth + 18, curY + 6);
+        doc.fillColor('#334155').fontSize(8).font('Amiri').text(deductions[i].label, margin + halfWidth + 18, curY + 6);
         doc.fillColor('#DC2626').font('Helvetica-Bold').text(deductions[i].amount, margin + contentWidth - 70, curY + 6, { width: 62, align: 'right' });
       }
 
@@ -205,19 +208,19 @@ export class PayslipPdfService {
 
     // Totals Bar
     doc.rect(margin, curY, halfWidth, 24).fillAndStroke('#E2E8F0', '#CBD5E1');
-    doc.fillColor('#0F172A').fontSize(8).font('Helvetica-Bold').text('GROSS EARNINGS / إجمالي المستحقات', margin + 8, curY + 7);
-    doc.text(`${data.grossPay} ${data.currency}`, margin + halfWidth - 110, curY + 7, { width: 102, align: 'right' });
+    doc.fillColor('#0F172A').fontSize(8).font('Amiri-Bold').text('GROSS EARNINGS / إجمالي المستحقات', margin + 8, curY + 7);
+    doc.font('Helvetica-Bold').text(`${data.grossPay} ${data.currency}`, margin + halfWidth - 110, curY + 7, { width: 102, align: 'right' });
 
     doc.rect(margin + halfWidth + 10, curY, halfWidth, 24).fillAndStroke('#E2E8F0', '#CBD5E1');
-    doc.fillColor('#0F172A').fontSize(8).font('Helvetica-Bold').text('TOTAL DEDUCTIONS / إجمالي الاستقطاعات', margin + halfWidth + 18, curY + 7);
+    doc.fillColor('#0F172A').fontSize(8).font('Amiri-Bold').text('TOTAL DEDUCTIONS / إجمالي الاستقطاعات', margin + halfWidth + 18, curY + 7);
     doc.fillColor('#DC2626').text(`${data.totalDeductions} ${data.currency}`, margin + contentWidth - 110, curY + 7, { width: 102, align: 'right' });
 
     curY += 34;
 
     // 4. Net Salary Callout Box
     doc.rect(margin, curY, contentWidth, 42).fillAndStroke('#0284C7', '#0369A1');
-    doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold').text('NET PAYABLE SALARY / صافي الراتب المستحق:', margin + 16, curY + 14);
-    doc.fontSize(14).text(`${data.netPay} ${data.currency}`, margin + contentWidth - 210, curY + 12, { width: 195, align: 'right' });
+    doc.fillColor('#FFFFFF').fontSize(11).font('Amiri-Bold').text('NET PAYABLE SALARY / صافي الراتب المستحق:', margin + 16, curY + 14);
+    doc.font('Helvetica-Bold').fontSize(14).text(`${data.netPay} ${data.currency}`, margin + contentWidth - 210, curY + 12, { width: 195, align: 'right' });
 
     curY += 54;
 

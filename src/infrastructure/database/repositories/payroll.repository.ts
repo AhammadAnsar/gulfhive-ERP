@@ -964,6 +964,10 @@ export class PayrollRepository {
     const run = await this.getPayrollRun(tenantId, runId);
     if (!run) throw new Error('Payroll run not found.');
 
+    if (!['APPROVED', 'POSTED', 'PAID'].includes(run.status)) {
+      throw new Error('WPS SIF file generation is only permitted from approved or posted payroll runs.');
+    }
+
     const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
     const empList = await db.select().from(employees).where(eq(employees.tenantId, tenantId));
     const empMap = new Map<string, any>(empList.map((e) => [e.id, e]));

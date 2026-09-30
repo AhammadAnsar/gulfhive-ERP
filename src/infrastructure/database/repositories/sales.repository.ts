@@ -20,6 +20,7 @@ import {
   auditLogs,
 } from '../../../db/schema.ts';
 import { numberingRepository } from './numbering.repository.ts';
+import { partyRepository } from './party.repository.ts';
 import { Money } from '../../../core/domain/money.ts';
 import { logger } from '../../../core/logging/logger.ts';
 
@@ -87,10 +88,35 @@ export class SalesRepository {
       throw new Error(`Client code '${cleanCode}' is already registered.`);
     }
 
+    // Sync with Unified Party Core
+    let partyId: number | null = null;
+    try {
+      const party = await partyRepository.createParty(
+        tenantId,
+        {
+          legalNameEn: input.nameEn,
+          legalNameAr: input.nameAr,
+          crNumber: input.crNumber,
+          email: input.email,
+          phone: input.phone,
+          website: input.website,
+          roles: ['CLIENT'],
+          clientProfile: {
+            paymentTermsId: input.paymentTermsId || '30 Days',
+          },
+        },
+        actorId
+      );
+      if (party) partyId = party.id;
+    } catch (pErr: any) {
+      logger.debug(`Party creation info: ${pErr.message}`);
+    }
+
     const [inserted] = await db
       .insert(clients)
       .values({
         tenantId,
+        partyId,
         code: cleanCode,
         nameEn: input.nameEn.trim(),
         nameAr: input.nameAr.trim(),
@@ -1272,10 +1298,21 @@ export class SalesRepository {
     },
     actorId = 'system'
   ) {
+    // Cross-company relational validation
+    const [cCheck] = await db
+      .select()
+      .from(clients)
+      .where(and(eq(clients.id, input.clientId), eq(clients.tenantId, tenantId)))
+      .limit(1);
+    if (!cCheck) {
+      throw new Error('Cross-company reference violation: Client does not belong to the active company.');
+    }
+
     const currency = input.currency.toUpperCase();
     const invNumber = await numberingRepository.generateNextNumber(tenantId, 'INVOICE', input.branchId);
 
     return db.transaction(async (tx) => {
+
       let subtotalSubunits = 0n;
       let discountTotalSubunits = 0n;
       let taxTotalSubunits = 0n;
@@ -1705,6 +1742,16 @@ export class SalesRepository {
     const recNumber = await numberingRepository.generateNextNumber(tenantId, 'RECEIPT', input.branchId);
 
     return db.transaction(async (tx) => {
+      // Cross-company relational validation
+      const [cCheck] = await tx
+        .select()
+        .from(clients)
+        .where(and(eq(clients.id, input.clientId), eq(clients.tenantId, tenantId)))
+        .limit(1);
+      if (!cCheck) {
+        throw new Error('Cross-company reference violation: Client does not belong to the active company.');
+      }
+
       const receiptAmountM = Money.create(input.amount, currency);
       let unallocatedSubunits = receiptAmountM.toSubunits();
 

@@ -159,7 +159,15 @@ export const apiClient = {
 
     const defaultHeaders: Record<string, string> = {
       'Accept': 'application/json',
+      'X-Correlation-ID': `req_client_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     };
+
+    if (typeof localStorage !== 'undefined') {
+      const token = localStorage.getItem('gulfhive_session_token') || localStorage.getItem('gulfhive_token') || localStorage.getItem('auth_token');
+      if (token) {
+        defaultHeaders['Authorization'] = `Bearer ${token}`;
+      }
+    }
 
     if (restOptions.body && !(restOptions.body instanceof FormData)) {
       defaultHeaders['Content-Type'] = 'application/json';
@@ -170,12 +178,20 @@ export const apiClient = {
       ...headers,
     };
 
-    const response = await fetch(url, {
-      ...restOptions,
-      headers: mergedHeaders,
-    });
+    try {
+      const response = await fetch(url, {
+        ...restOptions,
+        headers: mergedHeaders,
+      });
 
-    return parseResponseSafely<T>(response);
+      if (response.status === 401 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('gulfhive:unauthorized', { detail: { status: 401, url } }));
+      }
+
+      return await parseResponseSafely<T>(response);
+    } catch (error) {
+      throw error;
+    }
   },
 
   async get<T = any>(endpoint: string, options?: ApiRequestOptions): Promise<T> {

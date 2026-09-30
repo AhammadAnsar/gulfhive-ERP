@@ -4,6 +4,7 @@
  */
 
 import PDFDocument from 'pdfkit';
+import { registerArabicFonts } from './pdf-font-helper';
 
 export interface DailyAttendanceReportRow {
   employeeNumber: string;
@@ -44,6 +45,7 @@ export class TimeExportService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
 
         doc.on('data', (chunk) => buffers.push(chunk));

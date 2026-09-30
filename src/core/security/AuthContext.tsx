@@ -4,6 +4,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { apiClient } from '../../lib/api-client';
 
 export interface UserContext {
   userId: number;
@@ -47,11 +48,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       try {
-        const res = await fetch('/api/auth/me', {
-          headers: { Authorization: `Bearer ${storedToken}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
+        const data = await apiClient.get('/api/auth/me');
+        if (data && data.user) {
           setUser(data.user);
           setToken(storedToken);
         } else {
@@ -61,6 +59,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (err) {
         console.error('Failed to verify session', err);
+        localStorage.removeItem('gulfhive_session_token');
+        setToken(null);
         fetchMe('system');
       } finally {
         setIsLoading(false);
@@ -72,9 +72,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchMe = async (_fallbackMode?: string) => {
     try {
-      const res = await fetch('/api/auth/me');
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiClient.get('/api/auth/me');
+      if (data && data.user) {
         setUser(data.user);
       }
     } catch (err) {
@@ -87,21 +86,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (username: string, password: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Login failed');
-      }
-
-      const data = await res.json();
+      const data = await apiClient.post('/api/auth/login', { username, password });
       setUser(data.user);
       setToken(data.token);
       localStorage.setItem('gulfhive_session_token', data.token);
+    } catch (err: any) {
+      throw new Error(err.message || 'Login failed');
     } finally {
       setIsLoading(false);
     }
@@ -110,10 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       if (token) {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        await apiClient.post('/api/auth/logout');
       }
     } catch (err) {
       console.error('Logout request error', err);

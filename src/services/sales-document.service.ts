@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
 import { Money } from '../core/domain/money.ts';
+import { registerArabicFonts } from './pdf-font-helper';
 
 export class SalesDocumentService {
   /**
@@ -10,6 +11,7 @@ export class SalesDocumentService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -24,7 +26,7 @@ export class SalesDocumentService {
           .text(quote.client?.tenantNameEn || 'GULFHIVE ERP SERVICES', 55, 50);
         doc.fillColor('#38BDF8')
           .fontSize(10)
-          .font('Helvetica')
+          .font('Amiri')
           .text('OFFICIAL BUSINESS QUOTATION / عرض سعر رسمي', 55, 72);
 
         // --- Meta Grid ---
@@ -57,7 +59,7 @@ export class SalesDocumentService {
         // --- Table Headers ---
         const tableY = 215;
         doc.rect(40, tableY, 515, 20).fill('#0F172A');
-        doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+        doc.fillColor('#FFFFFF').font('Amiri-Bold').fontSize(8);
         doc.text('SR#', 45, tableY + 6);
         doc.text('DESCRIPTION / الوصف', 80, tableY + 6);
         doc.text('QTY / الكمية', 300, tableY + 6, { width: 50, align: 'right' });
@@ -83,7 +85,7 @@ export class SalesDocumentService {
         currentY += 10;
         doc.rect(340, currentY, 215, 75).stroke('#CBD5E1');
 
-        doc.fillColor('#475569').font('Helvetica-Bold');
+        doc.fillColor('#475569').font('Amiri-Bold');
         doc.text('Subtotal:', 350, currentY + 10);
         doc.text('Discount:', 350, currentY + 25);
         doc.text('Tax / الضريبة:', 350, currentY + 40);
@@ -98,7 +100,7 @@ export class SalesDocumentService {
         // --- Notes ---
         if (quote.notes) {
           currentY += 95;
-          doc.fillColor('#475569').font('Helvetica-Bold').fontSize(8).text('Terms & Notes / الشروط والأحكام:', 40, currentY);
+          doc.fillColor('#475569').font('Amiri-Bold').fontSize(8).text('Terms & Notes / الشروط والأحكام:', 40, currentY);
           doc.fillColor('#1E293B').font('Helvetica').text(quote.notes, 40, currentY + 12, { width: 515 });
         }
 
@@ -121,6 +123,7 @@ export class SalesDocumentService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -135,7 +138,7 @@ export class SalesDocumentService {
           .text(inv.client?.tenantNameEn || 'GULFHIVE GENERAL TRADING', 55, 50);
         doc.fillColor('#38BDF8')
           .fontSize(10)
-          .font('Helvetica')
+          .font('Amiri')
           .text('TAX INVOICE / فاتورة ضريبية رسمية', 55, 72);
 
         // --- Meta Grid ---
@@ -150,7 +153,7 @@ export class SalesDocumentService {
         doc.font('Helvetica').text(inv.dueDate, 130, 150);
 
         // Col 2
-        doc.font('Helvetica-Bold').text('Bill To / العميل:', 300, 120);
+        doc.font('Amiri-Bold').text('Bill To / العميل:', 300, 120);
         doc.font('Helvetica').text(inv.client?.nameEn || 'Customer Name', 380, 120);
         doc.font('Helvetica-Bold').text('Reference:', 300, 135);
         doc.font('Helvetica').text(inv.clientReference || 'N/A', 380, 135);
@@ -160,7 +163,7 @@ export class SalesDocumentService {
         // --- Table Headers ---
         const tableY = 185;
         doc.rect(40, tableY, 515, 20).fill('#0F172A');
-        doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+        doc.fillColor('#FFFFFF').font('Amiri-Bold').fontSize(8);
         doc.text('SR#', 45, tableY + 6);
         doc.text('DESCRIPTION / الوصف', 80, tableY + 6);
         doc.text('QTY / الكمية', 300, tableY + 6, { width: 50, align: 'right' });
@@ -186,7 +189,7 @@ export class SalesDocumentService {
         currentY += 10;
         doc.rect(340, currentY, 215, 90).stroke('#CBD5E1');
 
-        doc.fillColor('#475569').font('Helvetica-Bold');
+        doc.fillColor('#475569').font('Amiri-Bold');
         doc.text('Subtotal:', 350, currentY + 10);
         doc.text('Discount:', 350, currentY + 25);
         doc.text('Tax / الضريبة:', 350, currentY + 40);
@@ -203,7 +206,7 @@ export class SalesDocumentService {
         // --- Notes ---
         if (inv.notes) {
           currentY += 110;
-          doc.fillColor('#475569').font('Helvetica-Bold').fontSize(8).text('Invoice Notes / ملاحظات الفاتورة:', 40, currentY);
+          doc.fillColor('#475569').font('Amiri-Bold').fontSize(8).text('Invoice Notes / ملاحظات الفاتورة:', 40, currentY);
           doc.fillColor('#1E293B').font('Helvetica').text(inv.notes, 40, currentY + 12, { width: 515 });
         }
 
@@ -226,6 +229,7 @@ export class SalesDocumentService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -240,7 +244,7 @@ export class SalesDocumentService {
           .text(rec.client?.tenantNameEn || 'GULFHIVE OFFICIAL SYSTEM', 55, 50);
         doc.fillColor('#38BDF8')
           .fontSize(10)
-          .font('Helvetica')
+          .font('Amiri')
           .text('OFFICIAL PAYMENT RECEIPT / سند قبض رسمي', 55, 72);
 
         // --- Meta Grid ---
@@ -263,11 +267,11 @@ export class SalesDocumentService {
         doc.font('Helvetica-Bold').fillColor('#059669').text(Money.create(rec.amount, currency).toDecimalString() + ' ' + currency, 390, 150);
 
         // --- Allocations Section ---
-        doc.fillColor('#0F172A').font('Helvetica-Bold').fontSize(10).text('Allocations to Invoices / توزيع الدفعات:', 40, 185);
+        doc.fillColor('#0F172A').font('Amiri-Bold').fontSize(10).text('Allocations to Invoices / توزيع الدفعات:', 40, 185);
 
         const tableY = 205;
         doc.rect(40, tableY, 515, 20).fill('#0F172A');
-        doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+        doc.fillColor('#FFFFFF').font('Amiri-Bold').fontSize(8);
         doc.text('SR#', 45, tableY + 6);
         doc.text('ALLOCATION DATE', 80, tableY + 6);
         doc.text('ENTITY / REFERENCE', 180, tableY + 6);
@@ -323,6 +327,7 @@ export class SalesDocumentService {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        registerArabicFonts(doc);
         const buffers: Buffer[] = [];
         doc.on('data', (chunk) => buffers.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -337,7 +342,7 @@ export class SalesDocumentService {
           .text(stmt.client?.tenantNameEn || 'GULFHIVE ERP ACCOUNTING', 55, 50);
         doc.fillColor('#38BDF8')
           .fontSize(10)
-          .font('Helvetica')
+          .font('Amiri')
           .text(`CUSTOMER STATEMENT OF ACCOUNT / كشف حساب عميل (${stmt.dateFrom} to ${stmt.dateTo})`, 55, 72);
 
         // --- Meta Grid ---
