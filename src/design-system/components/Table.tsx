@@ -33,6 +33,13 @@ export interface TableProps<T> {
   pageSize?: number;
   actions?: React.ReactNode;
   className?: string;
+
+  // Row Selection Props
+  selectedKeys?: Set<string | number>;
+  onSelectionChange?: (selected: Set<string | number>) => void;
+  allFilteredSelected?: boolean;
+  onAllFilteredSelectedChange?: (allSelected: boolean) => void;
+  bulkActions?: React.ReactNode;
 }
 
 export function Table<T>({
@@ -49,8 +56,13 @@ export function Table<T>({
   pageSize = 10,
   actions,
   className = '',
+  selectedKeys,
+  onSelectionChange,
+  allFilteredSelected = false,
+  onAllFilteredSelectedChange,
+  bulkActions,
 }: TableProps<T>) {
-  const { direction } = useI18n();
+  const { direction, language } = useI18n();
   const [searchQuery, setSearchQuery] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -138,11 +150,72 @@ export function Table<T>({
         </div>
       )}
 
+      {/* Selection Banner (Select All Filtered & Bulk Actions) */}
+      {selectedKeys && onSelectionChange && selectedKeys.size > 0 && (
+        <div className="bg-slate-900 text-white px-4 py-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs font-semibold select-none border-b border-slate-800">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-slate-300 font-mono">
+              {selectedKeys.size} {language === 'ar' ? 'محدد' : 'selected'}
+            </span>
+            {paginatedData.every((row, idx) => selectedKeys.has(keyExtractor(row, idx))) && selectedKeys.size < sortedData.length && !allFilteredSelected && (
+              <button
+                type="button"
+                onClick={() => {
+                  const allKeys = new Set(sortedData.map((row, idx) => keyExtractor(row, idx)));
+                  onSelectionChange(allKeys);
+                  onAllFilteredSelectedChange?.(true);
+                }}
+                className="text-amber-400 hover:text-amber-300 underline font-bold cursor-pointer ml-2"
+              >
+                {language === 'ar' ? `تحديد كل الـ ${sortedData.length} سجلات المصفاة` : `Select all ${sortedData.length} filtered records`}
+              </button>
+            )}
+            {allFilteredSelected && (
+              <span className="text-emerald-400 font-bold ml-2">
+                ({language === 'ar' ? 'تم تحديد جميع السجلات المصفاة' : 'All filtered records are selected'})
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                onSelectionChange(new Set());
+                onAllFilteredSelectedChange?.(false);
+              }}
+              className="text-slate-400 hover:text-slate-200 underline font-semibold cursor-pointer ml-2"
+            >
+              {language === 'ar' ? 'إلغاء التحديد' : 'Clear selection'}
+            </button>
+          </div>
+          {bulkActions && <div className="flex items-center space-x-2 rtl:space-x-reverse">{bulkActions}</div>}
+        </div>
+      )}
+
       {/* Table Grid */}
       <div className="overflow-x-auto no-scrollbar w-full max-w-full">
         <table className="w-full text-left rtl:text-right text-xs table-auto">
           <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200 select-none">
             <tr>
+              {/* Optional Selection Column Header */}
+              {selectedKeys && onSelectionChange && (
+                <th className="py-2.5 px-3 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    checked={paginatedData.length > 0 && paginatedData.every((row, idx) => selectedKeys.has(keyExtractor(row, idx)))}
+                    onChange={(e) => {
+                      const next = new Set(selectedKeys);
+                      if (e.target.checked) {
+                        paginatedData.forEach((row, idx) => next.add(keyExtractor(row, idx)));
+                      } else {
+                        paginatedData.forEach((row, idx) => next.delete(keyExtractor(row, idx)));
+                        onAllFilteredSelectedChange?.(false);
+                      }
+                      onSelectionChange(next);
+                    }}
+                    className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer w-3.5 h-3.5"
+                  />
+                </th>
+              )}
+
               {columns.map((col) => {
                 const isSorted = sortKey === col.key;
                 return (
@@ -187,37 +260,62 @@ export function Table<T>({
           <tbody className="divide-y divide-slate-100">
             {isLoading ? (
               <tr>
-                <td colSpan={columns.length} className="p-0">
+                <td colSpan={(selectedKeys ? 1 : 0) + columns.length} className="p-0">
                   <LoadingState rows={pageSize} />
                 </td>
               </tr>
             ) : paginatedData.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="p-6">
+                <td colSpan={(selectedKeys ? 1 : 0) + columns.length} className="p-6">
                   <EmptyState title={emptyTitle} description={emptyDescription} />
                 </td>
               </tr>
             ) : (
-              paginatedData.map((row, idx) => (
-                <tr
-                  key={keyExtractor(row, idx)}
-                  onClick={() => onRowClick && onRowClick(row)}
-                  className={`transition-colors ${
-                    onRowClick ? 'cursor-pointer hover:bg-slate-50' : 'hover:bg-slate-50/50'
-                  }`}
-                >
-                  {columns.map((col) => (
-                    <td
-                      key={col.key}
-                      className={`py-2.5 px-3 text-slate-800 ${
-                        col.align === 'right' ? 'text-right rtl:text-left' : col.align === 'center' ? 'text-center' : ''
-                      }`}
-                    >
-                      {col.render ? col.render(row, idx) : (row as any)[col.key] ?? '—'}
-                    </td>
-                  ))}
-                </tr>
-              ))
+              paginatedData.map((row, idx) => {
+                const rowKey = keyExtractor(row, idx);
+                const isSelected = selectedKeys?.has(rowKey) || false;
+                return (
+                  <tr
+                    key={rowKey}
+                    onClick={() => onRowClick && onRowClick(row)}
+                    className={`transition-colors ${
+                      isSelected ? 'bg-slate-50/70' : ''
+                    } ${onRowClick ? 'cursor-pointer hover:bg-slate-50' : 'hover:bg-slate-50/50'}`}
+                  >
+                    {/* Optional Selection Checkbox Row Cell */}
+                    {selectedKeys && onSelectionChange && (
+                      <td className="py-2.5 px-3 w-10 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const next = new Set(selectedKeys);
+                            if (e.target.checked) {
+                              next.add(rowKey);
+                            } else {
+                              next.delete(rowKey);
+                              onAllFilteredSelectedChange?.(false);
+                            }
+                            onSelectionChange(next);
+                          }}
+                          className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer w-3.5 h-3.5"
+                        />
+                      </td>
+                    )}
+
+                    {columns.map((col) => (
+                      <td
+                        key={col.key}
+                        className={`py-2.5 px-3 text-slate-800 ${
+                          col.align === 'right' ? 'text-right rtl:text-left' : col.align === 'center' ? 'text-center' : ''
+                        }`}
+                      >
+                        {col.render ? col.render(row, idx) : (row as any)[col.key] ?? '—'}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

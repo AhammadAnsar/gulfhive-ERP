@@ -56,6 +56,18 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
   const [selectedEmployee, setSelectedEmployee] = useState<any | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
+  // Row Selection State for Employees
+  const [selectedEmpKeys, setSelectedEmpKeys] = useState<Set<string | number>>(new Set());
+  const [allFilteredSelected, setAllFilteredSelected] = useState(false);
+
+  // Bulk Preflight & Execution State
+  const [isPreflightLoading, setIsPreflightLoading] = useState(false);
+  const [preflightData, setPreflightData] = useState<any | null>(null);
+  const [showPreflightDialog, setShowPreflightDialog] = useState(false);
+  const [bulkActionType, setBulkActionType] = useState<'DELETE' | 'ARCHIVE'>('DELETE');
+  const [isExecutingBulk, setIsExecutingBulk] = useState(false);
+  const [bulkActionConfirmText, setBulkActionConfirmText] = useState('');
+
   // Modals
   const [showNewEmpDialog, setShowNewEmpDialog] = useState(false);
   const [showNewDeptDialog, setShowNewDeptDialog] = useState(false);
@@ -77,6 +89,8 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
     if (!company?.id) return;
     setIsLoading(true);
     setErrorMsg(null);
+    setSelectedEmpKeys(new Set());
+    setAllFilteredSelected(false);
 
     try {
       const [empRes, deptRes, desigRes, docRes] = await Promise.all([
@@ -106,6 +120,96 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
       setErrorMsg(err.message || 'Failed to load People module data');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setSelectedEmpKeys(new Set());
+    setAllFilteredSelected(false);
+  }, [activeTab]);
+
+  const handlePreflightBulkAction = async (action: 'DELETE' | 'ARCHIVE') => {
+    if (selectedEmpKeys.size === 0) return;
+    setBulkActionType(action);
+    setIsPreflightLoading(true);
+    setBulkActionConfirmText('');
+
+    try {
+      const ids = Array.from(selectedEmpKeys);
+      const res = await fetch(`/api/companies/${company.id}/employees/bulk-delete/preflight`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeIds: ids,
+          allFiltered: allFilteredSelected,
+        }),
+      });
+
+      if (!res.ok) throw new Error('Bulk action preflight check failed');
+      const data = await res.json();
+      setPreflightData(data);
+      setShowPreflightDialog(true);
+    } catch (err: any) {
+      addToast({
+        type: 'error',
+        title: 'Preflight Error',
+        message: err.message,
+      });
+    } finally {
+      setIsPreflightLoading(false);
+    }
+  };
+
+  const handleExecuteBulkAction = async () => {
+    if (!preflightData) return;
+    if (bulkActionType === 'DELETE' && bulkActionConfirmText !== 'DELETE') {
+      addToast({
+        type: 'error',
+        title: language === 'ar' ? 'تأكيد مطلوب' : 'Confirmation Required',
+        message: language === 'ar' ? 'الرجاء كتابة كلمة DELETE للتأكيد' : 'Please type DELETE to confirm permanent deletion',
+      });
+      return;
+    }
+
+    setIsExecutingBulk(true);
+    try {
+      const ids = Array.from(selectedEmpKeys);
+      const res = await fetch(`/api/companies/${company.id}/employees/bulk-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeIds: ids,
+          allFiltered: allFilteredSelected,
+          action: bulkActionType,
+          actorId: 'admin_user',
+          actorEmail: 'admin@gulfhive.erp',
+        }),
+      });
+
+      if (!res.ok) throw new Error('Bulk execution failed');
+      const result = await res.json();
+
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'تم اكتمال العملية الجماعية' : 'Bulk Operation Completed',
+        message: language === 'ar'
+          ? `المطلوب: ${result.requested}, المحذوف: ${result.deleted}, المؤرشف: ${result.archived}, المحمي: ${result.protected}, الفاشل: ${result.failed}`
+          : `Requested: ${result.requested}, Deleted: ${result.deleted}, Archived: ${result.archived}, Protected: ${result.protected}, Failed: ${result.failed}`,
+      });
+
+      setShowPreflightDialog(false);
+      setPreflightData(null);
+      setSelectedEmpKeys(new Set());
+      setAllFilteredSelected(false);
+      loadAllData();
+    } catch (err: any) {
+      addToast({
+        type: 'error',
+        title: 'Bulk Error',
+        message: err.message,
+      });
+    } finally {
+      setIsExecutingBulk(false);
     }
   };
 
@@ -482,6 +586,32 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
           searchable={true}
           searchPlaceholder="Search by name, employee number, email..."
           pageSize={10}
+          selectedKeys={selectedEmpKeys}
+          onSelectionChange={setSelectedEmpKeys}
+          allFilteredSelected={allFilteredSelected}
+          onAllFilteredSelectedChange={setAllFilteredSelected}
+          bulkActions={
+            <div className="flex items-center space-x-2 rtl:space-x-reverse">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="bg-slate-800 hover:bg-slate-700 text-white border-slate-700 text-xs py-1 px-2 h-7"
+                onClick={() => handlePreflightBulkAction('ARCHIVE')}
+                isLoading={isPreflightLoading && bulkActionType === 'ARCHIVE'}
+              >
+                {language === 'ar' ? 'أرشفة المحددين' : 'Archive Selected'}
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-rose-600 hover:bg-rose-700 text-white border-rose-700 text-xs py-1 px-2 h-7"
+                onClick={() => handlePreflightBulkAction('DELETE')}
+                isLoading={isPreflightLoading && bulkActionType === 'DELETE'}
+              >
+                {language === 'ar' ? 'حذف المحددين' : 'Delete Selected'}
+              </Button>
+            </div>
+          }
         />
       )}
 
@@ -713,6 +843,110 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
               ? 'سيتم حذف سجل الموظف وكافة البيانات المرتبطة بالعقد والرواتب بشكل نهائي.'
               : 'This action will permanently delete the employee record and all associated contract, salary, and document history.'}
           </p>
+        </div>
+      </Dialog>
+
+      {/* Bulk Action Preflight / Confirmation Dialog */}
+      <Dialog
+        isOpen={showPreflightDialog}
+        onClose={() => setShowPreflightDialog(false)}
+        title={
+          bulkActionType === 'DELETE'
+            ? (language === 'ar' ? 'مراجعة وتأكيد الحذف الجماعي' : 'Confirm Bulk Employee Deletion')
+            : (language === 'ar' ? 'مراجعة وتأكيد الأرشفة الجماعية' : 'Confirm Bulk Employee Archival')
+        }
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setShowPreflightDialog(false)}>
+              {t('action.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              className={bulkActionType === 'DELETE' ? 'bg-rose-600 hover:bg-rose-700 text-white border-rose-700 font-bold' : 'bg-slate-900 hover:bg-slate-800 text-white'}
+              onClick={handleExecuteBulkAction}
+              isLoading={isExecutingBulk}
+              disabled={bulkActionType === 'DELETE' && bulkActionConfirmText !== 'DELETE'}
+            >
+              {bulkActionType === 'DELETE'
+                ? (language === 'ar' ? `تأكيد حذف ${preflightData?.eligibleCount || 0} موظف` : `Permanently Delete ${preflightData?.eligibleCount || 0} Employees`)
+                : (language === 'ar' ? `تأكيد أرشفة ${preflightData?.totalCount || 0} موظف` : `Archive ${preflightData?.totalCount || 0} Employees`)
+              }
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4 py-2 text-xs">
+          <div className="p-3 bg-slate-50 rounded border border-slate-200">
+            <span className="font-semibold block text-slate-800 mb-1">
+              {language === 'ar' ? 'ملخص العملية المقترحة' : 'Operation Preflight Summary'}
+            </span>
+            <div className="grid grid-cols-3 gap-2 text-center mt-2">
+              <div className="p-2 bg-white rounded border border-slate-100">
+                <span className="text-slate-400 block text-[10px] uppercase font-mono">{language === 'ar' ? 'إجمالي المحددين' : 'Total Selected'}</span>
+                <span className="text-sm font-bold text-slate-900 font-mono">{preflightData?.totalCount || 0}</span>
+              </div>
+              <div className="p-2 bg-emerald-50 rounded border border-emerald-100">
+                <span className="text-emerald-600 block text-[10px] uppercase font-mono">{language === 'ar' ? 'مؤهلين للحذف' : 'Eligible for Delete'}</span>
+                <span className="text-sm font-bold text-emerald-700 font-mono">{preflightData?.eligibleCount || 0}</span>
+              </div>
+              <div className="p-2 bg-rose-50 rounded border border-rose-100">
+                <span className="text-rose-600 block text-[10px] uppercase font-mono">{language === 'ar' ? 'محميين (لا يمكن حذفهم)' : 'Protected (Non-deletable)'}</span>
+                <span className="text-sm font-bold text-rose-700 font-mono">{preflightData?.protectedCount || 0}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="max-h-56 overflow-y-auto border border-slate-100 rounded divide-y divide-slate-100 bg-white">
+            {preflightData?.items?.map((item: any) => (
+              <div key={item.id} className="p-2 flex items-center justify-between gap-3">
+                <div>
+                  <span className="font-mono font-bold text-slate-900">{item.employeeNumber}</span>
+                  <span className="text-slate-500 font-semibold block text-[11px]">{item.nameEn}</span>
+                </div>
+                <div>
+                  {item.isEligibleForDelete ? (
+                    <span className="px-2 py-0.5 text-[9px] bg-emerald-50 text-emerald-700 rounded font-semibold border border-emerald-200 uppercase">
+                      {language === 'ar' ? 'مؤهل' : 'Eligible'}
+                    </span>
+                  ) : (
+                    <div className="text-right">
+                      <span className="px-2 py-0.5 text-[9px] bg-rose-50 text-rose-700 rounded font-semibold border border-rose-200 uppercase">
+                        {language === 'ar' ? 'محمي من الحذف' : 'Protected'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5 max-w-xs truncate">{item.reasons?.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {bulkActionType === 'DELETE' && (
+            <div className="p-3 bg-rose-50 rounded border border-rose-200 space-y-2">
+              <span className="font-semibold block text-rose-900">
+                ⚠️ {language === 'ar' ? 'إجراء تنظيمي مدمر ودائم!' : 'Warning: Destructive, Permanent Deletion!'}
+              </span>
+              <p className="text-rose-800 leading-relaxed text-[11px]">
+                {language === 'ar'
+                  ? 'سيتم حذف الموظفين المؤهلين والبيانات المرتبطة بهم نهائيًا من خادم قاعدة البيانات. لا يمكن التراجع عن هذا الإجراء.'
+                  : 'Eligible records will be hard-deleted permanently from the secure relational server. Protected employees will be automatically skipped and left intact.'}
+              </p>
+              <div className="mt-2 space-y-1">
+                <label className="text-[11px] font-bold text-slate-700 block">
+                  {language === 'ar' ? 'اكتب كلمة DELETE للتحقق والمتابعة:' : 'Type DELETE to verify and proceed:'}
+                </label>
+                <Input
+                  type="text"
+                  value={bulkActionConfirmText}
+                  onChange={(e) => setBulkActionConfirmText(e.target.value)}
+                  placeholder="DELETE"
+                  className="font-mono uppercase py-1 border-rose-300 focus:border-rose-500"
+                />
+              </div>
+            </div>
+          )}
         </div>
       </Dialog>
     </div>

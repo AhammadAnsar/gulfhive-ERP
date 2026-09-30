@@ -1,10 +1,19 @@
 /**
  * GulfHive ERP - Deterministic Payroll Calculation Engine
  * Strictly auditable, decimal-safe pipeline integrating Contracts, Salary components,
- * Attendance, Leave, Overtime, Loans, and versioned GCC statutory rules (PIFSS, GOSI, Gratuity/EOSB).
+ * Attendance, Leave, Overtime, Adjustments, Loans, and versioned GCC statutory rules (PIFSS, GOSI, Gratuity/EOSB).
  */
 
 import { Money } from '../../../core/domain/money.ts';
+import { StatutoryRulesService } from '../../../services/compliance/statutory-rules.service.ts';
+import { FormulaEvaluator } from '../../../services/payroll/formula-evaluator.ts';
+
+export interface PayrollAdjustmentInput {
+  id?: string;
+  type: string;
+  amount: string;
+  reason: string;
+}
 
 export interface EmployeePayrollInput {
   employeeId: string;
@@ -22,10 +31,25 @@ export interface EmployeePayrollInput {
   unpaidLeaveDays: number;
   loanMonthlyInstallment: string;
   loanRemainingBalance: string;
+  adjustments?: PayrollAdjustmentInput[];
+  prorationFactor?: number; // 0.0 to 1.0 for mid-period joining or salary change
   bankName?: string;
   iban?: string;
   accountNumber?: string;
   bankCode?: string;
+}
+
+export interface PayrollResultLineItem {
+  componentCode: string;
+  componentName: string;
+  lineType: 'EARNING' | 'DEDUCTION' | 'EMPLOYER_CONTRIBUTION' | 'INFORMATION';
+  quantity?: string;
+  rate?: string;
+  amount: string;
+  sourceType: 'CONTRACT' | 'TIME' | 'LEAVE' | 'OVERTIME' | 'ADJUSTMENT' | 'LOAN' | 'STATUTORY' | 'FORMULA';
+  sourceId?: string;
+  calculationRuleReference?: string;
+  displayOrder: number;
 }
 
 export interface CalculatedPayrollItem {
@@ -47,6 +71,7 @@ export interface CalculatedPayrollItem {
   netPay: string;
   bankName: string;
   iban: string;
+  resultLines: PayrollResultLineItem[];
   calculationBreakdown: {
     basePackage: {
       basic: string;
@@ -96,71 +121,206 @@ export class PayrollCalculator {
    */
   public static calculate(input: EmployeePayrollInput): CalculatedPayrollItem {
     const curr = input.baseCurrency;
+    const factor = input.prorationFactor !== undefined ? Math.max(0, Math.min(1, input.prorationFactor)) : 1.0;
+    const resultLines: PayrollResultLineItem[] = [];
+    let order = 1;
 
-    // 1. Base Compensation Components
-    const basicM = Money.create(input.basicSalary || '0', curr);
-    const housingM = Money.create(input.housingAllowance || '0', curr);
-    const transportM = Money.create(input.transportAllowance || '0', curr);
-    const otherM = Money.create(input.otherAllowances || '0', curr);
+    // 1. Base Compensation Components (with Proration if applicable)
+    let basicM = Money.create(input.basicSalary || '0', curr);
+    let housingM = Money.create(input.housingAllowance || '0', curr);
+    let transportM = Money.create(input.transportAllowance || '0', curr);
+    let otherM = Money.create(input.otherAllowances || '0', curr);
+
+    if (factor < 1.0) {
+      basicM = Money.create(Number(basicM.amount) * factor, curr);
+      housingM = Money.create(Number(housingM.amount) * factor, curr);
+      transportM = Money.create(Number(transportM.amount) * factor, curr);
+      otherM = Money.create(Number(otherM.amount) * factor, curr);
+    }
+
+    resultLines.push({
+      componentCode: 'BASIC',
+      componentName: 'Basic Salary / الراتب الأساسي',
+      lineType: 'EARNING',
+      amount: basicM.toDecimalString(),
+      sourceType: 'CONTRACT',
+      calculationRuleReference: factor < 1.0 ? `Contract baseline prorated at ${(factor * 100).toFixed(1)}%` : 'Contract baseline wage',
+      displayOrder: order++,
+    });
+
+    if (housingM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'HOUSING',
+        componentName: 'Housing Allowance / بدل سكن',
+        lineType: 'EARNING',
+        amount: housingM.toDecimalString(),
+        sourceType: 'CONTRACT',
+        displayOrder: order++,
+      });
+    }
+
+    if (transportM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'TRANSPORT',
+        componentName: 'Transport Allowance / بدل نقل',
+        lineType: 'EARNING',
+        amount: transportM.toDecimalString(),
+        sourceType: 'CONTRACT',
+        displayOrder: order++,
+      });
+    }
+
+    if (otherM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'OTHER',
+        componentName: 'Other Allowances / بدلات أخرى',
+        lineType: 'EARNING',
+        amount: otherM.toDecimalString(),
+        sourceType: 'CONTRACT',
+        displayOrder: order++,
+      });
+    }
 
     const regularPackageM = basicM.add(housingM).add(transportM).add(otherM);
 
     // 2. Overtime Computation (GCC 30-day labor month, 8-hour workday = 240 hours/month)
-    // Hourly rate = Basic Salary / 240
-    const basicSubunits = basicM.toSubunits();
-    const hourlySubunits = basicSubunits / 240n;
+    const otPolicy = StatutoryRulesService.getOvertimePolicy(input.countryCode);
+    const hourlySubunits = basicM.toSubunits() / BigInt(otPolicy.hourlyBaseDivisor);
     const otHours = (input.overtimeMinutes / 60).toFixed(2);
+    const multiplier = otPolicy.regularDayMultiplier;
 
-    // Multiplier per country labor law (Kuwait Art 66: 1.25x standard; Saudi: 1.50x)
-    const multiplier = input.countryCode === 'SA' ? 1.5 : 1.25;
     const otSubunits = BigInt(Math.round(Number(hourlySubunits) * (input.overtimeMinutes / 60) * multiplier));
     const overtimeM = Money.fromSubunits(otSubunits, curr);
 
-    // Gross Earnings = Regular Package + Overtime
-    const grossM = regularPackageM.add(overtimeM);
+    if (overtimeM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'OVERTIME',
+        componentName: 'Approved Overtime / العمل الإضافي المعتمد',
+        lineType: 'EARNING',
+        quantity: `${otHours} hrs`,
+        rate: Money.fromSubunits(hourlySubunits, curr).toDecimalString(),
+        amount: overtimeM.toDecimalString(),
+        sourceType: 'OVERTIME',
+        calculationRuleReference: `${otPolicy.sourceReference} (${multiplier}x regular rate)`,
+        displayOrder: order++,
+      });
+    }
 
-    // 3. Unpaid Leave Deduction (Daily Rate = Basic Salary / 30)
-    const dailySubunits = basicSubunits / 30n;
+    // 3. Process Adjustments (Bonuses, Commissions, Reimbursements, Penalties)
+    let adjustmentAdditionsM = Money.zero(curr);
+    let adjustmentDeductionsM = Money.zero(curr);
+
+    if (input.adjustments && input.adjustments.length > 0) {
+      for (const adj of input.adjustments) {
+        const adjM = Money.create(adj.amount, curr);
+        const isDeduction = ['DEDUCTION', 'PENALTY'].includes(adj.type.toUpperCase());
+        if (isDeduction) {
+          adjustmentDeductionsM = adjustmentDeductionsM.add(adjM);
+          resultLines.push({
+            componentCode: adj.type.toUpperCase(),
+            componentName: `Adjustment: ${adj.reason || adj.type}`,
+            lineType: 'DEDUCTION',
+            amount: adjM.toDecimalString(),
+            sourceType: 'ADJUSTMENT',
+            sourceId: adj.id,
+            displayOrder: order++,
+          });
+        } else {
+          adjustmentAdditionsM = adjustmentAdditionsM.add(adjM);
+          resultLines.push({
+            componentCode: adj.type.toUpperCase(),
+            componentName: `Adjustment: ${adj.reason || adj.type}`,
+            lineType: 'EARNING',
+            amount: adjM.toDecimalString(),
+            sourceType: 'ADJUSTMENT',
+            sourceId: adj.id,
+            displayOrder: order++,
+          });
+        }
+      }
+    }
+
+    // Gross Earnings = Regular Package + Overtime + Earning Adjustments
+    const grossM = regularPackageM.add(overtimeM).add(adjustmentAdditionsM);
+
+    // 4. Unpaid Leave Deduction (Daily Rate = Basic Salary / 30)
+    const dailySubunits = basicM.toSubunits() / 30n;
     const unpaidSubunits = dailySubunits * BigInt(input.unpaidLeaveDays);
     const unpaidDeductionM = Money.fromSubunits(unpaidSubunits, curr);
 
-    // 4. Employee Loan Deduction (min of installment due and remaining balance)
+    if (unpaidDeductionM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'UNPAID_LEAVE',
+        componentName: 'Unpaid Absence Deduction / استقطاع غياب وإجازات غير مدفوعة',
+        lineType: 'DEDUCTION',
+        quantity: `${input.unpaidLeaveDays} days`,
+        rate: Money.fromSubunits(dailySubunits, curr).toDecimalString(),
+        amount: unpaidDeductionM.toDecimalString(),
+        sourceType: 'LEAVE',
+        calculationRuleReference: '30-day statutory calendar day divisor (Basic / 30)',
+        displayOrder: order++,
+      });
+    }
+
+    // 5. Employee Loan Deduction (min of installment due and remaining balance)
     const loanInstM = Money.create(input.loanMonthlyInstallment || '0', curr);
     const loanBalM = Money.create(input.loanRemainingBalance || '0', curr);
     const loanDeductionM = loanInstM.toSubunits() > loanBalM.toSubunits() ? loanBalM : loanInstM;
 
-    // 5. Statutory Social Insurance (PIFSS in Kuwait, GOSI in Saudi)
-    // Applied to citizens / nationals
-    const isKuwaiti = input.countryCode === 'KW' && (input.nationality.toLowerCase().includes('kuwait') || input.nationality.toLowerCase().includes('كويت'));
-    const isSaudi = input.countryCode === 'SA' && (input.nationality.toLowerCase().includes('saudi') || input.nationality.toLowerCase().includes('سعود'));
-
-    let empContribSubunits = 0n;
-    let emplyrContribSubunits = 0n;
-    let schemeName = 'None (Expatriate Gratuity Scheme)';
-    let empRateStr = '0%';
-    let emplyrRateStr = '0%';
-
-    if (isKuwaiti) {
-      // Kuwait PIFSS: 10.5% employee, 11.5% employer on basic + regular allowances
-      schemeName = 'Kuwait Public Institution for Social Security (PIFSS)';
-      empRateStr = '10.5%';
-      emplyrRateStr = '11.5%';
-      empContribSubunits = BigInt(Math.round(Number(regularPackageM.toSubunits()) * 0.105));
-      emplyrContribSubunits = BigInt(Math.round(Number(regularPackageM.toSubunits()) * 0.115));
-    } else if (isSaudi) {
-      // Saudi GOSI: 9.75% employee (9% Annuities + 0.75% SANED), 11.75% employer
-      schemeName = 'Saudi General Organization for Social Insurance (GOSI)';
-      empRateStr = '9.75%';
-      emplyrRateStr = '11.75%';
-      empContribSubunits = BigInt(Math.round(Number(basicM.add(housingM).toSubunits()) * 0.0975));
-      emplyrContribSubunits = BigInt(Math.round(Number(basicM.add(housingM).toSubunits()) * 0.1175));
+    if (loanDeductionM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'LOAN_INSTALLMENT',
+        componentName: 'Employee Loan Recovery / استقطاع قسط سلفة وقرض',
+        lineType: 'DEDUCTION',
+        amount: loanDeductionM.toDecimalString(),
+        sourceType: 'LOAN',
+        calculationRuleReference: `Remaining balance before: ${loanBalM.toDecimalString()} ${curr}`,
+        displayOrder: order++,
+      });
     }
 
-    const statutoryEmpM = Money.fromSubunits(empContribSubunits, curr);
-    const statutoryEmplyrM = Money.fromSubunits(emplyrContribSubunits, curr);
+    // 6. Versioned Statutory Social Insurance (PIFSS in Kuwait, GOSI in Saudi)
+    const socialIns = StatutoryRulesService.calculateSocialInsurance({
+      countryCode: input.countryCode,
+      nationality: input.nationality,
+      currency: curr,
+      basicSalary: basicM.toDecimalString(),
+      housingAllowance: housingM.toDecimalString(),
+      transportAllowance: transportM.toDecimalString(),
+      otherAllowances: otherM.toDecimalString(),
+    });
 
-    // Total Deductions = Unpaid Leave + Loan + Statutory Employee Contribution
-    const totalDeductionsM = unpaidDeductionM.add(loanDeductionM).add(statutoryEmpM);
+    const statutoryEmpM = Money.create(socialIns.employeeContributionAmount, curr);
+    const statutoryEmplyrM = Money.create(socialIns.employerContributionAmount, curr);
+
+    if (statutoryEmpM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'STATUTORY_PENSION_EMP',
+        componentName: `Social Insurance (${socialIns.schemeName})`,
+        lineType: 'DEDUCTION',
+        rate: `${(socialIns.employeeRate * 100).toFixed(1)}%`,
+        amount: statutoryEmpM.toDecimalString(),
+        sourceType: 'STATUTORY',
+        calculationRuleReference: socialIns.sourceReference,
+        displayOrder: order++,
+      });
+    }
+
+    if (statutoryEmplyrM.toSubunits() > 0n) {
+      resultLines.push({
+        componentCode: 'STATUTORY_PENSION_EMPLYR',
+        componentName: `Employer Social Insurance Contribution (${socialIns.schemeName})`,
+        lineType: 'EMPLOYER_CONTRIBUTION',
+        rate: `${(socialIns.employerRate * 100).toFixed(1)}%`,
+        amount: statutoryEmplyrM.toDecimalString(),
+        sourceType: 'STATUTORY',
+        calculationRuleReference: `${socialIns.sourceReference} (Employer share — cost only, not deducted from net pay)`,
+        displayOrder: order++,
+      });
+    }
+
+    // Total Deductions = Unpaid Leave + Loan + Adjustment Deductions + Statutory Employee Contribution
+    const totalDeductionsM = unpaidDeductionM.add(loanDeductionM).add(adjustmentDeductionsM).add(statutoryEmpM);
 
     // Net Pay = Gross - Total Deductions
     const netM = grossM.subtract(totalDeductionsM);
@@ -184,6 +344,7 @@ export class PayrollCalculator {
       netPay: netM.toDecimalString(),
       bankName: input.bankName || 'Direct Transfer',
       iban: input.iban || '',
+      resultLines,
       calculationBreakdown: {
         basePackage: {
           basic: basicM.toDecimalString(),
@@ -198,7 +359,7 @@ export class PayrollCalculator {
           hourlyRate: Money.fromSubunits(hourlySubunits, curr).toDecimalString(),
           multiplier: `${multiplier}x`,
           total: overtimeM.toDecimalString(),
-          rule: `Article statutory multiplier: ${multiplier}x basic rate`,
+          rule: `${otPolicy.sourceReference}: ${multiplier}x basic rate`,
         },
         leaveDeductions: {
           unpaidDays: input.unpaidLeaveDays,
@@ -212,12 +373,12 @@ export class PayrollCalculator {
         },
         statutoryPension: {
           country: input.countryCode,
-          isNational: isKuwaiti || isSaudi,
-          employeeRate: empRateStr,
+          isNational: socialIns.isApplicable,
+          employeeRate: `${(socialIns.employeeRate * 100).toFixed(1)}%`,
           employeeAmount: statutoryEmpM.toDecimalString(),
-          employerRate: emplyrRateStr,
+          employerRate: `${(socialIns.employerRate * 100).toFixed(1)}%`,
           employerAmount: statutoryEmplyrM.toDecimalString(),
-          scheme: schemeName,
+          scheme: socialIns.schemeName,
         },
         summary: {
           gross: grossM.toDecimalString(),
@@ -230,7 +391,6 @@ export class PayrollCalculator {
 
   /**
    * End of Service Benefits (EOSB) / Indemnity Calculation
-   * Complies with Kuwait Labor Law Art. 51 & 53 and Saudi Labor Law Art. 84.
    */
   public static calculateEndofServiceIndemnity(params: {
     countryCode: string;
@@ -245,80 +405,28 @@ export class PayrollCalculator {
     currency: string;
   }) {
     const curr = params.currency;
-    const diffMs = params.lastWorkingDate.getTime() - params.joiningDate.getTime();
-    const serviceYears = Math.max(diffMs / (1000 * 60 * 60 * 24 * 365.25), 0);
+    const eosb = StatutoryRulesService.calculateEndOfService({
+      countryCode: params.countryCode,
+      contractType: params.contractType,
+      terminationType: params.terminationType,
+      joiningDate: params.joiningDate,
+      lastWorkingDate: params.lastWorkingDate,
+      lastBasicSalary: params.lastBasicSalary,
+      currency: curr,
+    });
+
     const basicM = Money.create(params.lastBasicSalary, curr);
-
-    let indemnitySubunits = 0n;
-
-    if (params.countryCode === 'KW') {
-      // Kuwait Labor Law No. 6 of 2010 Art. 51:
-      // First 5 years: 15 days remuneration per year worked (15/26 of monthly pay)
-      // Beyond 5 years: 1 month remuneration (26/26) per year worked
-      // Capped at 1.5 years' remuneration (18 months basic pay)
-      const dailySubunits = basicM.toSubunits() / 26n;
-      const first5Years = Math.min(serviceYears, 5);
-      const after5Years = Math.max(serviceYears - 5, 0);
-
-      const first5Subunits = BigInt(Math.round(first5Years * 15 * Number(dailySubunits)));
-      const after5Subunits = BigInt(Math.round(after5Years * Number(basicM.toSubunits())));
-
-      let totalGrossIndemnity = first5Subunits + after5Subunits;
-      const maxCap = basicM.toSubunits() * 18n; // Capped at 1.5 years (18 months' basic salary)
-
-      if (totalGrossIndemnity > maxCap) {
-        totalGrossIndemnity = maxCap;
-      }
-
-      // Kuwait Art. 53: If employee resigns under unlimited contract:
-      // < 3 years: 0%
-      // 3 - 5 years: 50%
-      // 5 - 10 years: 66.67%
-      // >= 10 years: 100%
-      if (params.terminationType === 'RESIGNATION' && params.contractType === 'UNLIMITED') {
-        if (serviceYears < 3) totalGrossIndemnity = 0n;
-        else if (serviceYears < 5) totalGrossIndemnity = totalGrossIndemnity / 2n;
-        else if (serviceYears < 10) totalGrossIndemnity = BigInt(Math.round(Number(totalGrossIndemnity) * (2 / 3)));
-      }
-
-      indemnitySubunits = totalGrossIndemnity;
-    } else {
-      // Standard GCC / Saudi Art. 84:
-      // Half month wage for first 5 years + 1 month wage for following years
-      const halfMonthSubunits = basicM.toSubunits() / 2n;
-      const first5Years = Math.min(serviceYears, 5);
-      const after5Years = Math.max(serviceYears - 5, 0);
-
-      let totalGross = BigInt(Math.round(first5Years * Number(halfMonthSubunits) + after5Years * Number(basicM.toSubunits())));
-
-      // Saudi resignation scale (Art. 85): < 2 yrs: 0, 2-5 yrs: 1/3, 5-10 yrs: 2/3, >= 10: full
-      if (params.terminationType === 'RESIGNATION') {
-        if (serviceYears < 2) totalGross = 0n;
-        else if (serviceYears < 5) totalGross = totalGross / 3n;
-        else if (serviceYears < 10) totalGross = BigInt(Math.round(Number(totalGross) * (2 / 3)));
-      }
-
-      indemnitySubunits = totalGross;
-    }
-
-    const gratuityM = Money.fromSubunits(indemnitySubunits, curr);
-
-    // Accrued leave payout (days * daily wage basic/26)
-    const dailyWage = basicM.toSubunits() / 26n;
-    const leavePayoutM = Money.fromSubunits(dailyWage * BigInt(params.accruedLeaveDays), curr);
-
-    // Unpaid salary days
-    const unpaidSalaryM = Money.fromSubunits(dailyWage * BigInt(params.unpaidSalaryDays), curr);
-
-    // Loan deductions
+    const dailyWageM = Money.create(Number(basicM.amount) / 26, curr);
+    const leavePayoutM = Money.create(Number(dailyWageM.amount) * (params.accruedLeaveDays || 0), curr);
+    const unpaidSalaryM = Money.create(Number(dailyWageM.amount) * (params.unpaidSalaryDays || 0), curr);
     const loanBalM = Money.create(params.loanBalance || '0', curr);
 
-    // Net settlement
+    const gratuityM = Money.create(eosb.gratuityAmount, curr);
     const netSubunits = gratuityM.toSubunits() + leavePayoutM.toSubunits() + unpaidSalaryM.toSubunits() - loanBalM.toSubunits();
     const netM = Money.fromSubunits(netSubunits < 0n ? 0n : netSubunits, curr);
 
     return {
-      serviceYears: serviceYears.toFixed(2),
+      serviceYears: eosb.serviceYears.toFixed(2),
       gratuityAmount: gratuityM.toDecimalString(),
       accruedLeaveEncashment: leavePayoutM.toDecimalString(),
       unpaidSalary: unpaidSalaryM.toDecimalString(),
@@ -326,16 +434,18 @@ export class PayrollCalculator {
       netSettlementAmount: netM.toDecimalString(),
       currency: curr,
       calculationDetails: {
-        tenureYears: serviceYears.toFixed(2),
-        basis: `${params.countryCode} Labor Law Statutory Formula`,
+        tenureYears: eosb.serviceYears.toFixed(2),
+        basis: `${params.countryCode} Labor Law Statutory Formula (${eosb.sourceReference})`,
         lastSalary: basicM.toDecimalString(),
         gratuityGross: gratuityM.toDecimalString(),
+        resignationFactor: eosb.resignationFactor,
         leaveEncashmentDays: params.accruedLeaveDays,
         leaveEncashmentAmount: leavePayoutM.toDecimalString(),
         unpaidDays: params.unpaidSalaryDays,
         unpaidAmount: unpaidSalaryM.toDecimalString(),
         loanRecovery: loanBalM.toDecimalString(),
         finalNetPayable: netM.toDecimalString(),
+        statutoryBreakdown: eosb.breakdown,
       },
     };
   }
@@ -381,7 +491,7 @@ export class PayrollCalculator {
   }
 
   /**
-   * Generates standard CSV/Spreadsheet representation for Excel export.
+   * Generates standard CSV representation for Excel export.
    */
   public static generatePayrollSpreadsheet(params: {
     period: string;

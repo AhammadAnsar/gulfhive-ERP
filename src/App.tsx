@@ -16,6 +16,9 @@ import { TimeModule } from './modules/time/TimeModule.tsx';
 import { PayrollModule } from './modules/payroll/PayrollModule.tsx';
 import { DashboardModule } from './modules/dashboard/DashboardModule.tsx';
 import { SettingsModule } from './modules/settings/SettingsModule.tsx';
+import { SalesModule } from './modules/sales/SalesModule.tsx';
+import { PurchaseModule } from './modules/purchase/PurchaseModule.tsx';
+import { ProjectsModule } from './modules/projects/ProjectsModule.tsx';
 import {
   Coins,
   FileCheck,
@@ -261,6 +264,24 @@ function MainWorkspace() {
           branches={companyBranches}
           activeBranchId={activeBranchId}
           onCompanyUpdated={() => fetchCompanyBranches(activeCompany.id)}
+        />
+      ) : activeModule === 'sales' ? (
+        <SalesModule
+          company={activeCompany}
+          branches={companyBranches}
+          activeBranchId={activeBranchId}
+        />
+      ) : activeModule === 'purchase' ? (
+        <PurchaseModule
+          company={activeCompany}
+          branches={companyBranches}
+          activeBranchId={activeBranchId}
+        />
+      ) : activeModule === 'projects' ? (
+        <ProjectsModule
+          company={activeCompany}
+          branches={companyBranches}
+          activeBranchId={activeBranchId}
         />
       ) : (
         <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-2xs text-center space-y-4">

@@ -21,6 +21,11 @@ import { dashboardRepository } from './src/infrastructure/database/repositories/
 import { masterDataRepository } from './src/infrastructure/database/repositories/master-data.repository.ts';
 import { numberingRepository } from './src/infrastructure/database/repositories/numbering.repository.ts';
 import { authRepository } from './src/infrastructure/database/repositories/auth.repository.ts';
+import { salesRepository } from './src/infrastructure/database/repositories/sales.repository.ts';
+import { procurementRepository } from './src/infrastructure/database/repositories/procurement.repository.ts';
+import { projectsRepository } from './src/infrastructure/database/repositories/projects.repository.ts';
+import { salesDocumentService } from './src/services/sales-document.service.ts';
+import { procurementDocumentService } from './src/services/procurement-document.service.ts';
 import { pdfGeneratorService } from './src/services/pdf-generator.service.ts';
 import { attendanceImportService } from './src/services/attendance-import.service.ts';
 import { timeExportService } from './src/services/time-export.service.ts';
@@ -34,6 +39,19 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// CORS & Preflight Handling for hosted and separate-origin deployments
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin || '*';
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Correlation-ID, X-Requested-With, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  next();
+});
 
 // Request logging middleware with correlation IDs (scoped to API routes)
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -79,12 +97,13 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 });
 
 // System Setup Status (Checks if first-run setup wizard is required)
-app.get('/api/system/setup-status', async (_req: Request, res: Response) => {
+app.get(['/api/system/setup-status', '/api/setup/status'], async (_req: Request, res: Response) => {
   try {
     const count = await companyRepository.getCompaniesCount();
     const activeTenant = count > 0 ? await companyRepository.getFirstCompany() : null;
 
     res.json({
+      success: true,
       needsSetup: count === 0,
       tenantsCount: count,
       activeTenant,
@@ -93,7 +112,7 @@ app.get('/api/system/setup-status', async (_req: Request, res: Response) => {
     });
   } catch (error: any) {
     logger.error('Failed to query setup status', error);
-    res.status(500).json({ error: 'Failed to verify system setup status' });
+    res.status(500).json({ success: false, error: 'Failed to verify system setup status', code: 'SETUP_STATUS_ERROR' });
   }
 });
 
@@ -120,8 +139,8 @@ app.get('/api/system/status', async (_req: Request, res: Response) => {
   }
 });
 
-// First-Run Company Setup Wizard Creation Endpoint
-app.post('/api/setup/company', async (req: Request, res: Response) => {
+// First-Run Company Setup Wizard Creation Endpoint (supports both /api/setup/company and /api/setup/establish)
+app.post(['/api/setup/company', '/api/setup/establish'], async (req: Request, res: Response) => {
   try {
     const {
       code,
@@ -155,19 +174,25 @@ app.post('/api/setup/company', async (req: Request, res: Response) => {
 
     if (!code || !legalNameEn || !legalNameAr || !countryCode || !baseCurrency) {
       return res.status(400).json({
+        success: false,
         error: 'Missing required company parameters: code, legalNameEn, legalNameAr, countryCode, baseCurrency',
+        code: 'VALIDATION_ERROR',
       });
     }
 
     if (!branchNameEn || !branchNameAr) {
       return res.status(400).json({
+        success: false,
         error: 'Missing required main branch parameters: branchNameEn, branchNameAr',
+        code: 'VALIDATION_ERROR',
       });
     }
 
     if (!adminEmail) {
       return res.status(400).json({
+        success: false,
         error: 'Administrator email is required.',
+        code: 'VALIDATION_ERROR',
       });
     }
 
@@ -211,7 +236,11 @@ app.post('/api/setup/company', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     logger.error('Failed to execute company setup wizard', error);
-    res.status(400).json({ error: error.message || 'Failed to establish company' });
+    res.status(400).json({
+      success: false,
+      error: error.message || 'Failed to establish company',
+      code: 'COMPANY_SETUP_FAILED',
+    });
   }
 });
 
@@ -1255,6 +1284,60 @@ app.delete('/api/companies/:companyId/employees/:employeeId', async (req: Reques
   }
 });
 
+// Employee Bulk Delete Preflight Inspection API
+app.post('/api/companies/:companyId/employees/bulk-delete/preflight', async (req: Request, res: Response) => {
+  try {
+    const { employeeIds, allFiltered, filterCriteria } = req.body;
+    const preflight = await peopleRepository.preflightBulkDelete(req.params.companyId, {
+      employeeIds,
+      allFiltered,
+      filterCriteria,
+    });
+    res.json(preflight);
+  } catch (error: any) {
+    logger.error('Failed to execute bulk delete preflight', error);
+    res.status(400).json({ error: error.message || 'Failed to execute preflight check' });
+  }
+});
+
+// Employee Centralized Bulk Delete / Archive Execution API
+app.post('/api/companies/:companyId/employees/bulk-delete', async (req: Request, res: Response) => {
+  try {
+    const { employeeIds, allFiltered, filterCriteria, action, actorId, actorEmail } = req.body;
+    const result = await peopleRepository.bulkDeleteEmployees(req.params.companyId, {
+      employeeIds,
+      allFiltered,
+      filterCriteria,
+      action: action || 'DELETE',
+      actorId: actorId || 'admin',
+      actorEmail: actorEmail || 'admin@gulfhive.internal',
+    });
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Failed to execute bulk delete', error);
+    res.status(400).json({ error: error.message || 'Bulk delete failed' });
+  }
+});
+
+// Employee Centralized Bulk Archive API
+app.post('/api/companies/:companyId/employees/bulk-archive', async (req: Request, res: Response) => {
+  try {
+    const { employeeIds, allFiltered, filterCriteria, actorId, actorEmail } = req.body;
+    const result = await peopleRepository.bulkDeleteEmployees(req.params.companyId, {
+      employeeIds,
+      allFiltered,
+      filterCriteria,
+      action: 'ARCHIVE',
+      actorId: actorId || 'admin',
+      actorEmail: actorEmail || 'admin@gulfhive.internal',
+    });
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Failed to execute bulk archive', error);
+    res.status(400).json({ error: error.message || 'Bulk archive failed' });
+  }
+});
+
 // Employee Contracts API
 app.post('/api/companies/:companyId/employees/:employeeId/contracts', async (req: Request, res: Response) => {
   try {
@@ -2169,6 +2252,155 @@ app.get('/api/companies/:companyId/payroll/runs', async (req: Request, res: Resp
   }
 });
 
+// Payroll Periods Endpoints
+app.get('/api/companies/:companyId/payroll/periods', async (req: Request, res: Response) => {
+  try {
+    const periods = await payrollRepository.listPayrollPeriods(req.params.companyId);
+    res.json({ periods });
+  } catch (error: any) {
+    logger.error('Failed to list payroll periods', error);
+    res.status(500).json({ error: 'Failed to retrieve payroll periods' });
+  }
+});
+
+app.post('/api/companies/:companyId/payroll/periods', async (req: Request, res: Response) => {
+  try {
+    const { year, month, periodStart, periodEnd, paymentDate, actorId } = req.body;
+    if (!year || !month || !periodStart || !periodEnd) {
+      return res.status(400).json({ error: 'year, month, periodStart, and periodEnd are required.' });
+    }
+    const period = await payrollRepository.createPayrollPeriod(req.params.companyId, {
+      year: Number(year),
+      month: Number(month),
+      periodStart,
+      periodEnd,
+      paymentDate,
+      actorId,
+    });
+    res.status(201).json({ period });
+  } catch (error: any) {
+    logger.error('Failed to create payroll period', error);
+    res.status(400).json({ error: error.message || 'Failed to create payroll period' });
+  }
+});
+
+app.put('/api/companies/:companyId/payroll/periods/:id/status', async (req: Request, res: Response) => {
+  try {
+    const { status, actorId } = req.body;
+    if (!status) return res.status(400).json({ error: 'status is required.' });
+    const period = await payrollRepository.updatePayrollPeriodStatus(req.params.companyId, req.params.id, status, actorId);
+    res.json({ period });
+  } catch (error: any) {
+    logger.error('Failed to update period status', error);
+    res.status(400).json({ error: error.message || 'Failed to update period status' });
+  }
+});
+
+// Configurable Salary Components Endpoints
+app.get('/api/companies/:companyId/payroll/components', async (req: Request, res: Response) => {
+  try {
+    const components = await payrollRepository.listSalaryComponents(req.params.companyId);
+    res.json({ components });
+  } catch (error: any) {
+    logger.error('Failed to list salary components', error);
+    res.status(500).json({ error: 'Failed to retrieve salary components' });
+  }
+});
+
+app.post('/api/companies/:companyId/payroll/components', async (req: Request, res: Response) => {
+  try {
+    const { code, nameEn, nameAr, componentType, calculationType, formulaExpression, affectsGross, affectsNet, affectsOvertimeBase, affectsEosBase, displayOrder } = req.body;
+    if (!code || !nameEn || !nameAr) {
+      return res.status(400).json({ error: 'code, nameEn, and nameAr are required.' });
+    }
+    const component = await payrollRepository.createSalaryComponent(req.params.companyId, {
+      code,
+      nameEn,
+      nameAr,
+      componentType: componentType || 'EARNING',
+      calculationType: calculationType || 'FIXED',
+      formulaExpression,
+      affectsGross,
+      affectsNet,
+      affectsOvertimeBase,
+      affectsEosBase,
+      displayOrder: displayOrder ? Number(displayOrder) : 0,
+    });
+    res.status(201).json({ component });
+  } catch (error: any) {
+    logger.error('Failed to create salary component', error);
+    res.status(400).json({ error: error.message || 'Failed to create salary component' });
+  }
+});
+
+// Salary Structures Endpoints
+app.get('/api/companies/:companyId/payroll/structures', async (req: Request, res: Response) => {
+  try {
+    const structures = await payrollRepository.listSalaryStructures(req.params.companyId);
+    res.json({ structures });
+  } catch (error: any) {
+    logger.error('Failed to list salary structures', error);
+    res.status(500).json({ error: 'Failed to retrieve salary structures' });
+  }
+});
+
+app.post('/api/companies/:companyId/payroll/structures', async (req: Request, res: Response) => {
+  try {
+    const { code, nameEn, nameAr, effectiveFrom, effectiveTo, components } = req.body;
+    if (!code || !nameEn || !nameAr || !effectiveFrom) {
+      return res.status(400).json({ error: 'code, nameEn, nameAr, and effectiveFrom are required.' });
+    }
+    const structure = await payrollRepository.createSalaryStructure(req.params.companyId, {
+      code,
+      nameEn,
+      nameAr,
+      effectiveFrom,
+      effectiveTo,
+      components: components || [],
+    });
+    res.status(201).json({ structure });
+  } catch (error: any) {
+    logger.error('Failed to create salary structure', error);
+    res.status(400).json({ error: error.message || 'Failed to create salary structure' });
+  }
+});
+
+// Payroll Adjustments Endpoints
+app.get('/api/companies/:companyId/payroll/adjustments', async (req: Request, res: Response) => {
+  try {
+    const employeeId = req.query.employeeId as string | undefined;
+    const periodId = req.query.periodId as string | undefined;
+    const adjustments = await payrollRepository.listAdjustments(req.params.companyId, employeeId, periodId);
+    res.json({ adjustments });
+  } catch (error: any) {
+    logger.error('Failed to list payroll adjustments', error);
+    res.status(500).json({ error: 'Failed to retrieve adjustments' });
+  }
+});
+
+app.post('/api/companies/:companyId/payroll/adjustments', async (req: Request, res: Response) => {
+  try {
+    const { employeeId, payrollPeriodId, type, amount, quantity, reason, effectiveDate, createdBy } = req.body;
+    if (!employeeId || !type || !amount || !reason || !effectiveDate) {
+      return res.status(400).json({ error: 'employeeId, type, amount, reason, and effectiveDate are required.' });
+    }
+    const adjustment = await payrollRepository.createAdjustment(req.params.companyId, {
+      employeeId,
+      payrollPeriodId,
+      type,
+      amount,
+      quantity,
+      reason,
+      effectiveDate,
+      createdBy,
+    });
+    res.status(201).json({ adjustment });
+  } catch (error: any) {
+    logger.error('Failed to create payroll adjustment', error);
+    res.status(400).json({ error: error.message || 'Failed to create adjustment' });
+  }
+});
+
 // Get Single Run with Items
 app.get('/api/companies/:companyId/payroll/runs/:id', async (req: Request, res: Response) => {
   try {
@@ -2221,6 +2453,59 @@ app.post('/api/companies/:companyId/payroll/runs/:id/approve', async (req: Reque
   } catch (error: any) {
     logger.error('Failed to approve payroll run', error);
     res.status(400).json({ error: error.message || 'Failed to approve payroll run' });
+  }
+});
+
+// Post Payroll Run (Freeze, Lock, Deduct Loans)
+app.post('/api/companies/:companyId/payroll/runs/:id/post', async (req: Request, res: Response) => {
+  try {
+    const { posterId } = req.body;
+    const run = await payrollRepository.postPayrollRun(req.params.companyId, req.params.id, posterId || 'admin');
+    res.json({ run });
+  } catch (error: any) {
+    logger.error('Failed to post payroll run', error);
+    res.status(400).json({ error: error.message || 'Failed to post payroll run' });
+  }
+});
+
+// Controlled Reversal of Payroll Run
+app.post('/api/companies/:companyId/payroll/runs/:id/reverse', async (req: Request, res: Response) => {
+  try {
+    const { actorId, reason } = req.body;
+    if (!reason) {
+      return res.status(400).json({ error: 'Reversal reason is required.' });
+    }
+    const run = await payrollRepository.reversePayrollRun(req.params.companyId, req.params.id, actorId || 'admin', reason);
+    res.json({ run });
+  } catch (error: any) {
+    logger.error('Failed to reverse payroll run', error);
+    res.status(400).json({ error: error.message || 'Failed to reverse payroll run' });
+  }
+});
+
+// Individual Employee Payslip PDF Download
+app.get('/api/companies/:companyId/payroll/runs/:id/payslips/:employeeId/pdf', async (req: Request, res: Response) => {
+  try {
+    const pdfBuffer = await payrollRepository.generatePayslipPdf(req.params.companyId, req.params.id, req.params.employeeId);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Payslip_${req.params.id}_${req.params.employeeId}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    logger.error('Failed to generate payslip PDF', error);
+    res.status(400).json({ error: error.message || 'Failed to generate payslip PDF' });
+  }
+});
+
+// Batch Payslips PDF Download
+app.get('/api/companies/:companyId/payroll/runs/:id/payslips/batch/pdf', async (req: Request, res: Response) => {
+  try {
+    const pdfBuffer = await payrollRepository.generateBatchPayslipsPdf(req.params.companyId, req.params.id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Batch_Payslips_${req.params.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    logger.error('Failed to generate batch payslips PDF', error);
+    res.status(400).json({ error: error.message || 'Failed to generate batch payslips PDF' });
   }
 });
 
@@ -2327,6 +2612,524 @@ app.post('/api/companies/:companyId/final-settlements/:id/approve', async (req: 
   }
 });
 
+// ==========================================
+// SALES & RECEIVABLES MODULE ENDPOINTS
+// ==========================================
+
+// 1. Clients Management
+app.get('/api/companies/:companyId/sales/clients', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listClients(req.params.companyId);
+    res.json({ clients: list });
+  } catch (error: any) {
+    logger.error('Failed to list clients', error);
+    res.status(500).json({ error: 'Failed to retrieve clients list' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/clients/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const client = await salesRepository.getClient(req.params.companyId, Number(req.params.id));
+    if (!client) return res.status(404).json({ error: 'Client not found or access denied' });
+    res.json({ client });
+  } catch (error: any) {
+    logger.error('Failed to get client', error);
+    res.status(500).json({ error: 'Failed to retrieve client details' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/clients', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const client = await salesRepository.createClient(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ client });
+  } catch (error: any) {
+    logger.error('Failed to create client', error);
+    res.status(400).json({ error: error.message || 'Failed to create client' });
+  }
+});
+
+app.put('/api/companies/:companyId/sales/clients/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const client = await salesRepository.updateClient(req.params.companyId, Number(req.params.id), req.body, (req as any).user?.uid || 'admin');
+    res.json({ client });
+  } catch (error: any) {
+    logger.error('Failed to update client', error);
+    res.status(400).json({ error: error.message || 'Failed to update client' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/clients/:id/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const preflight = await salesRepository.preflightDeleteClient(req.params.companyId, Number(req.params.id));
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight client delete', error);
+    res.status(400).json({ error: error.message || 'Failed to preflight client delete' });
+  }
+});
+
+app.delete('/api/companies/:companyId/sales/clients/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const result = await salesRepository.deleteClient(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete client', error);
+    res.status(400).json({ error: error.message || 'Failed to delete client' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/clients/bulk-delete/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { clientIds } = req.body;
+    const preflight = await salesRepository.preflightBulkDeleteClients(req.params.companyId, clientIds);
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight bulk delete clients', error);
+    res.status(400).json({ error: error.message || 'Failed to preflight bulk delete clients' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/clients/bulk-delete', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { clientIds, action, reason } = req.body;
+    const result = await salesRepository.bulkDeleteClients(req.params.companyId, {
+      clientIds,
+      action: action || 'DELETE',
+      actorId: (req as any).user?.uid || 'admin',
+      reason,
+    });
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed bulk delete clients', error);
+    res.status(400).json({ error: error.message || 'Failed to execute bulk delete clients' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/clients/:id/contacts', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const contact = await salesRepository.createClientContact(req.params.companyId, Number(req.params.id), req.body);
+    res.status(201).json({ contact });
+  } catch (error: any) {
+    logger.error('Failed to create client contact', error);
+    res.status(400).json({ error: error.message || 'Failed to create contact' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/clients/:id/sites', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const site = await salesRepository.createClientSite(req.params.companyId, Number(req.params.id), req.body);
+    res.status(201).json({ site });
+  } catch (error: any) {
+    logger.error('Failed to create client site', error);
+    res.status(400).json({ error: error.message || 'Failed to create site' });
+  }
+});
+
+// 2. Tax Codes
+app.get('/api/companies/:companyId/sales/tax-codes', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listTaxCodes(req.params.companyId);
+    res.json({ taxCodes: list });
+  } catch (error: any) {
+    logger.error('Failed to list tax codes', error);
+    res.status(500).json({ error: 'Failed to retrieve tax codes' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/tax-codes', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const tc = await salesRepository.createTaxCode(req.params.companyId, req.body);
+    res.status(201).json({ taxCode: tc });
+  } catch (error: any) {
+    logger.error('Failed to create tax code', error);
+    res.status(400).json({ error: error.message || 'Failed to create tax code' });
+  }
+});
+
+// 3. Quotations
+app.get('/api/companies/:companyId/sales/quotations', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listQuotations(req.params.companyId);
+    res.json({ quotations: list });
+  } catch (error: any) {
+    logger.error('Failed to list quotations', error);
+    res.status(500).json({ error: 'Failed to retrieve quotations' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/quotations/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const quote = await salesRepository.getQuotation(req.params.companyId, Number(req.params.id));
+    if (!quote) return res.status(404).json({ error: 'Quotation not found or access denied' });
+    res.json({ quotation: quote });
+  } catch (error: any) {
+    logger.error('Failed to get quotation', error);
+    res.status(500).json({ error: 'Failed to retrieve quotation details' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/quotations', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const quote = await salesRepository.createQuotation(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ quotation: quote });
+  } catch (error: any) {
+    logger.error('Failed to create quotation', error);
+    res.status(400).json({ error: error.message || 'Failed to create quotation' });
+  }
+});
+
+app.put('/api/companies/:companyId/sales/quotations/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const quote = await salesRepository.updateQuotation(req.params.companyId, Number(req.params.id), req.body, (req as any).user?.uid || 'admin');
+    res.json({ quotation: quote });
+  } catch (error: any) {
+    logger.error('Failed to update quotation', error);
+    res.status(400).json({ error: error.message || 'Failed to update quotation' });
+  }
+});
+
+app.delete('/api/companies/:companyId/sales/quotations/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const result = await salesRepository.deleteQuotation(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete quotation', error);
+    res.status(400).json({ error: error.message || 'Failed to delete quotation' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/quotations/:id/convert', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const order = await salesRepository.convertQuotationToSalesOrder(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.status(201).json({ salesOrder: order });
+  } catch (error: any) {
+    logger.error('Failed to convert quotation to order', error);
+    res.status(400).json({ error: error.message || 'Failed to convert quotation' });
+  }
+});
+
+// 4. Sales Orders
+app.get('/api/companies/:companyId/sales/orders', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listSalesOrders(req.params.companyId);
+    res.json({ salesOrders: list });
+  } catch (error: any) {
+    logger.error('Failed to list sales orders', error);
+    res.status(500).json({ error: 'Failed to retrieve sales orders' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/orders/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const order = await salesRepository.getSalesOrder(req.params.companyId, Number(req.params.id));
+    if (!order) return res.status(404).json({ error: 'Sales Order not found or access denied' });
+    res.json({ salesOrder: order });
+  } catch (error: any) {
+    logger.error('Failed to get sales order', error);
+    res.status(500).json({ error: 'Failed to retrieve sales order details' });
+  }
+});
+
+app.delete('/api/companies/:companyId/sales/orders/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const result = await salesRepository.deleteSalesOrder(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete sales order', error);
+    res.status(400).json({ error: error.message || 'Failed to delete sales order' });
+  }
+});
+
+// 5. Deliveries
+app.get('/api/companies/:companyId/sales/deliveries', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listDeliveries(req.params.companyId);
+    res.json({ deliveries: list });
+  } catch (error: any) {
+    logger.error('Failed to list deliveries', error);
+    res.status(500).json({ error: 'Failed to retrieve deliveries' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/deliveries/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const dlv = await salesRepository.getDelivery(req.params.companyId, Number(req.params.id));
+    if (!dlv) return res.status(404).json({ error: 'Delivery note not found or access denied' });
+    res.json({ delivery: dlv });
+  } catch (error: any) {
+    logger.error('Failed to get delivery note', error);
+    res.status(500).json({ error: 'Failed to retrieve delivery note details' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/deliveries/from-order', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const dlv = await salesRepository.createDeliveryFromSalesOrder(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ delivery: dlv });
+  } catch (error: any) {
+    logger.error('Failed to create delivery note', error);
+    res.status(400).json({ error: error.message || 'Failed to create delivery note' });
+  }
+});
+
+app.delete('/api/companies/:companyId/sales/deliveries/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const result = await salesRepository.deleteDelivery(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete delivery note', error);
+    res.status(400).json({ error: error.message || 'Failed to delete delivery note' });
+  }
+});
+
+// 6. Invoices
+app.get('/api/companies/:companyId/sales/invoices', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listInvoices(req.params.companyId);
+    res.json({ invoices: list });
+  } catch (error: any) {
+    logger.error('Failed to list invoices', error);
+    res.status(500).json({ error: 'Failed to retrieve invoices' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/invoices/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const inv = await salesRepository.getInvoice(req.params.companyId, Number(req.params.id));
+    if (!inv) return res.status(404).json({ error: 'Invoice not found or access denied' });
+    res.json({ invoice: inv });
+  } catch (error: any) {
+    logger.error('Failed to get invoice', error);
+    res.status(500).json({ error: 'Failed to retrieve invoice details' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/invoices/direct', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const inv = await salesRepository.createDirectInvoice(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ invoice: inv });
+  } catch (error: any) {
+    logger.error('Failed to create direct invoice', error);
+    res.status(400).json({ error: error.message || 'Failed to create invoice' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/invoices/:id/post', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const inv = await salesRepository.postInvoice(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ invoice: inv });
+  } catch (error: any) {
+    logger.error('Failed to post invoice', error);
+    res.status(400).json({ error: error.message || 'Failed to post invoice' });
+  }
+});
+
+app.delete('/api/companies/:companyId/sales/invoices/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const result = await salesRepository.deleteInvoice(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete invoice', error);
+    res.status(400).json({ error: error.message || 'Failed to delete invoice' });
+  }
+});
+
+// 7. Credit Notes
+app.get('/api/companies/:companyId/sales/credit-notes', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listCreditNotes(req.params.companyId);
+    res.json({ creditNotes: list });
+  } catch (error: any) {
+    logger.error('Failed to list credit notes', error);
+    res.status(500).json({ error: 'Failed to retrieve credit notes' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/credit-notes/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const cn = await salesRepository.getCreditNote(req.params.companyId, Number(req.params.id));
+    if (!cn) return res.status(404).json({ error: 'Credit note not found or access denied' });
+    res.json({ creditNote: cn });
+  } catch (error: any) {
+    logger.error('Failed to get credit note', error);
+    res.status(500).json({ error: 'Failed to retrieve credit note details' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/credit-notes', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const cn = await salesRepository.createCreditNote(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ creditNote: cn });
+  } catch (error: any) {
+    logger.error('Failed to create credit note', error);
+    res.status(400).json({ error: error.message || 'Failed to create credit note' });
+  }
+});
+
+// 8. Receipts
+app.get('/api/companies/:companyId/sales/receipts', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await salesRepository.listReceipts(req.params.companyId);
+    res.json({ receipts: list });
+  } catch (error: any) {
+    logger.error('Failed to list receipts', error);
+    res.status(500).json({ error: 'Failed to retrieve receipts' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/receipts/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const rec = await salesRepository.getReceipt(req.params.companyId, Number(req.params.id));
+    if (!rec) return res.status(404).json({ error: 'Receipt not found or access denied' });
+    res.json({ receipt: rec });
+  } catch (error: any) {
+    logger.error('Failed to get receipt', error);
+    res.status(500).json({ error: 'Failed to retrieve receipt details' });
+  }
+});
+
+app.post('/api/companies/:companyId/sales/receipts', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const rec = await salesRepository.createReceipt(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ receipt: rec });
+  } catch (error: any) {
+    logger.error('Failed to create receipt', error);
+    res.status(400).json({ error: error.message || 'Failed to create receipt' });
+  }
+});
+
+app.delete('/api/companies/:companyId/sales/receipts/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const result = await salesRepository.deleteReceipt(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete receipt', error);
+    res.status(400).json({ error: error.message || 'Failed to delete receipt' });
+  }
+});
+
+// 9. Document Downloads & Reports
+app.get('/api/companies/:companyId/sales/quotations/:id/pdf', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const quote = await salesRepository.getQuotation(req.params.companyId, Number(req.params.id));
+    if (!quote) return res.status(404).send('Quotation not found');
+    const pdf = await salesDocumentService.generateQuotationPDF(quote);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="QUOTATION_${quote.quotationNumber}.pdf"`);
+    res.send(pdf);
+  } catch (error: any) {
+    logger.error('Failed to generate quotation PDF', error);
+    res.status(500).send('Failed to generate PDF document');
+  }
+});
+
+app.get('/api/companies/:companyId/sales/invoices/:id/pdf', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const inv = await salesRepository.getInvoice(req.params.companyId, Number(req.params.id));
+    if (!inv) return res.status(404).send('Invoice not found');
+    const pdf = await salesDocumentService.generateInvoicePDF(inv);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="INVOICE_${inv.invoiceNumber}.pdf"`);
+    res.send(pdf);
+  } catch (error: any) {
+    logger.error('Failed to generate invoice PDF', error);
+    res.status(500).send('Failed to generate PDF document');
+  }
+});
+
+app.get('/api/companies/:companyId/sales/receipts/:id/pdf', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const rec = await salesRepository.getReceipt(req.params.companyId, Number(req.params.id));
+    if (!rec) return res.status(404).send('Receipt not found');
+    const pdf = await salesDocumentService.generateReceiptPDF(rec);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="RECEIPT_${rec.receiptNumber}.pdf"`);
+    res.send(pdf);
+  } catch (error: any) {
+    logger.error('Failed to generate receipt PDF', error);
+    res.status(500).send('Failed to generate PDF document');
+  }
+});
+
+app.get('/api/companies/:companyId/sales/clients/:id/statement', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { dateFrom, dateTo, currency } = req.query;
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ error: 'dateFrom and dateTo are required query parameters' });
+    }
+    const stmt = await salesRepository.getCustomerStatement(
+      req.params.companyId,
+      Number(req.params.id),
+      String(dateFrom),
+      String(dateTo),
+      String(currency || 'KWD')
+    );
+    res.json({ statement: stmt });
+  } catch (error: any) {
+    logger.error('Failed to calculate customer statement', error);
+    res.status(400).json({ error: error.message || 'Failed to retrieve statement' });
+  }
+});
+
+app.get('/api/companies/:companyId/sales/clients/:id/statement/pdf', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { dateFrom, dateTo, currency } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).send('dateFrom and dateTo are required');
+    const stmt = await salesRepository.getCustomerStatement(
+      req.params.companyId,
+      Number(req.params.id),
+      String(dateFrom),
+      String(dateTo),
+      String(currency || 'KWD')
+    );
+    const pdf = await salesDocumentService.generateStatementPDF(stmt);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Statement_${stmt.client.code}.pdf"`);
+    res.send(pdf);
+  } catch (error: any) {
+    logger.error('Failed to generate statement PDF', error);
+    res.status(500).send('Failed to generate PDF statement');
+  }
+});
+
+app.get('/api/companies/:companyId/sales/clients/:id/statement/excel', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { dateFrom, dateTo, currency } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).send('dateFrom and dateTo are required');
+    const stmt = await salesRepository.getCustomerStatement(
+      req.params.companyId,
+      Number(req.params.id),
+      String(dateFrom),
+      String(dateTo),
+      String(currency || 'KWD')
+    );
+    const excelBuffer = await salesDocumentService.generateStatementExcel(stmt);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Statement_${stmt.client.code}.xlsx"`);
+    res.send(excelBuffer);
+  } catch (error: any) {
+    logger.error('Failed to generate statement Excel', error);
+    res.status(500).send('Failed to generate Excel statement');
+  }
+});
+
+app.get('/api/companies/:companyId/sales/reports/aging', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { currency } = req.query;
+    const report = await salesRepository.getReceivableAging(req.params.companyId, String(currency || 'KWD'));
+    res.json({ agingReport: report });
+  } catch (error: any) {
+    logger.error('Failed to build aging report', error);
+    res.status(400).json({ error: error.message || 'Failed to retrieve aging report' });
+  }
+});
+
 // Authenticated user profile endpoint
 app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
@@ -2341,6 +3144,899 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => 
   } catch (error: any) {
     logger.error('Failed to resolve authenticated user profile', error);
     res.status(500).json({ error: 'Failed to synchronize user session' });
+  }
+});
+
+// ==========================================
+// PURCHASE, PROCUREMENT & PAYABLES MODULE ENDPOINTS
+// ==========================================
+
+// 1. Suppliers
+app.get('/api/companies/:companyId/procurement/suppliers', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listSuppliers(req.params.companyId);
+    res.json({ suppliers: list });
+  } catch (error: any) {
+    logger.error('Failed to list suppliers', error);
+    res.status(500).json({ error: 'Failed to retrieve suppliers list' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/suppliers/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const supplier = await procurementRepository.getSupplier(req.params.companyId, Number(req.params.id));
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+    res.json({ supplier });
+  } catch (error: any) {
+    logger.error('Failed to get supplier', error);
+    res.status(500).json({ error: 'Failed to retrieve supplier' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/suppliers', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const supplier = await procurementRepository.createSupplier(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ supplier });
+  } catch (error: any) {
+    logger.error('Failed to create supplier', error);
+    res.status(400).json({ error: error.message || 'Failed to create supplier' });
+  }
+});
+
+app.put('/api/companies/:companyId/procurement/suppliers/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const supplier = await procurementRepository.updateSupplier(req.params.companyId, Number(req.params.id), req.body, (req as any).user?.uid || 'admin');
+    res.json({ supplier });
+  } catch (error: any) {
+    logger.error('Failed to update supplier', error);
+    res.status(400).json({ error: error.message || 'Failed to update supplier' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/suppliers/:id/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const preflight = await procurementRepository.preflightDeleteSupplier(req.params.companyId, Number(req.params.id));
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight supplier delete', error);
+    res.status(400).json({ error: error.message || 'Failed to preflight supplier' });
+  }
+});
+
+app.delete('/api/companies/:companyId/procurement/suppliers/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const result = await procurementRepository.deleteSupplier(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete supplier', error);
+    res.status(400).json({ error: error.message || 'Failed to delete supplier' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/suppliers/bulk-delete/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { supplierIds } = req.body;
+    const preflight = await procurementRepository.preflightBulkDeleteSuppliers(req.params.companyId, supplierIds);
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight bulk delete suppliers', error);
+    res.status(400).json({ error: error.message || 'Failed to preflight bulk delete' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/suppliers/bulk-delete', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { supplierIds, action, reason } = req.body;
+    const result = await procurementRepository.bulkDeleteSuppliers(req.params.companyId, {
+      supplierIds,
+      action: action || 'DELETE',
+      actorId: (req as any).user?.uid || 'admin',
+      reason,
+    });
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed bulk delete suppliers', error);
+    res.status(400).json({ error: error.message || 'Failed bulk delete' });
+  }
+});
+
+// 2. Purchase Requests
+app.get('/api/companies/:companyId/procurement/purchase-requests', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listPurchaseRequests(req.params.companyId);
+    res.json({ purchaseRequests: list });
+  } catch (error: any) {
+    logger.error('Failed to list PRs', error);
+    res.status(500).json({ error: 'Failed to retrieve purchase requests' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/purchase-requests/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pr = await procurementRepository.getPurchaseRequest(req.params.companyId, Number(req.params.id));
+    if (!pr) return res.status(404).json({ error: 'Purchase request not found' });
+    res.json({ purchaseRequest: pr });
+  } catch (error: any) {
+    logger.error('Failed to get PR', error);
+    res.status(500).json({ error: 'Failed to retrieve purchase request details' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/purchase-requests', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pr = await procurementRepository.createPurchaseRequest(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ purchaseRequest: pr });
+  } catch (error: any) {
+    logger.error('Failed to create PR', error);
+    res.status(400).json({ error: error.message || 'Failed to create purchase request' });
+  }
+});
+
+app.put('/api/companies/:companyId/procurement/purchase-requests/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pr = await procurementRepository.updatePurchaseRequest(req.params.companyId, Number(req.params.id), req.body, (req as any).user?.uid || 'admin');
+    res.json({ purchaseRequest: pr });
+  } catch (error: any) {
+    logger.error('Failed to update PR', error);
+    res.status(400).json({ error: error.message || 'Failed to update purchase request' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/purchase-requests/:id/submit', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pr = await procurementRepository.setPurchaseRequestStatus(req.params.companyId, Number(req.params.id), 'SUBMITTED', (req as any).user?.uid || 'admin');
+    res.json({ purchaseRequest: pr });
+  } catch (error: any) {
+    logger.error('Failed to submit PR', error);
+    res.status(400).json({ error: error.message || 'Failed to submit' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/purchase-requests/:id/approve', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pr = await procurementRepository.setPurchaseRequestStatus(req.params.companyId, Number(req.params.id), 'APPROVED', (req as any).user?.uid || 'admin');
+    res.json({ purchaseRequest: pr });
+  } catch (error: any) {
+    logger.error('Failed to approve PR', error);
+    res.status(400).json({ error: error.message || 'Failed to approve' });
+  }
+});
+
+app.delete('/api/companies/:companyId/procurement/purchase-requests/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const result = await procurementRepository.deletePurchaseRequest(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete PR', error);
+    res.status(400).json({ error: error.message || 'Failed to delete' });
+  }
+});
+
+// 3. RFQs & Supplier Quotations
+app.get('/api/companies/:companyId/procurement/rfqs', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listRFQs(req.params.companyId);
+    res.json({ rfqs: list });
+  } catch (error: any) {
+    logger.error('Failed to list RFQs', error);
+    res.status(500).json({ error: 'Failed to retrieve RFQs' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/rfqs', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const rfq = await procurementRepository.createRFQ(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ rfq });
+  } catch (error: any) {
+    logger.error('Failed to create RFQ', error);
+    res.status(400).json({ error: error.message || 'Failed to create RFQ' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/quotations', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listSupplierQuotations(req.params.companyId);
+    res.json({ quotations: list });
+  } catch (error: any) {
+    logger.error('Failed to list quotations', error);
+    res.status(500).json({ error: 'Failed to retrieve quotations' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/quotations', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const quote = await procurementRepository.createSupplierQuotation(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ quotation: quote });
+  } catch (error: any) {
+    logger.error('Failed to create quotation', error);
+    res.status(400).json({ error: error.message || 'Failed to create quotation' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/quotations/:id/select', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const quote = await procurementRepository.selectQuotation(req.params.companyId, Number(req.params.id), reason, (req as any).user?.uid || 'admin');
+    res.json({ quotation: quote });
+  } catch (error: any) {
+    logger.error('Failed to select quotation', error);
+    res.status(400).json({ error: error.message || 'Failed to select quotation' });
+  }
+});
+
+// 4. Purchase Orders (PO)
+app.get('/api/companies/:companyId/procurement/purchase-orders', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listPurchaseOrders(req.params.companyId);
+    res.json({ purchaseOrders: list });
+  } catch (error: any) {
+    logger.error('Failed to list POs', error);
+    res.status(500).json({ error: 'Failed to retrieve POs' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/purchase-orders/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const po = await procurementRepository.getPurchaseOrder(req.params.companyId, Number(req.params.id));
+    if (!po) return res.status(404).json({ error: 'PO not found' });
+    res.json({ purchaseOrder: po });
+  } catch (error: any) {
+    logger.error('Failed to get PO', error);
+    res.status(500).json({ error: 'Failed to retrieve PO details' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/purchase-orders', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const po = await procurementRepository.createPurchaseOrder(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ purchaseOrder: po });
+  } catch (error: any) {
+    logger.error('Failed to create PO', error);
+    res.status(400).json({ error: error.message || 'Failed to create PO' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/purchase-orders/:id/approve', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const po = await procurementRepository.approvePurchaseOrder(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ purchaseOrder: po });
+  } catch (error: any) {
+    logger.error('Failed to approve PO', error);
+    res.status(400).json({ error: error.message || 'Failed to approve PO' });
+  }
+});
+
+app.delete('/api/companies/:companyId/procurement/purchase-orders/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const result = await procurementRepository.deletePurchaseOrder(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete PO', error);
+    res.status(400).json({ error: error.message || 'Failed to delete PO' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/purchase-orders/:id/pdf', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const po = await procurementRepository.getPurchaseOrder(req.params.companyId, Number(req.params.id));
+    if (!po) return res.status(404).send('Purchase Order not found');
+
+    const pdf = await procurementDocumentService.generatePurchaseOrderPDF(po);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="PO_${po.purchaseOrderNumber}.pdf"`);
+    res.send(pdf);
+  } catch (error: any) {
+    logger.error('Failed to generate PO PDF', error);
+    res.status(500).send('Failed to generate PDF');
+  }
+});
+
+// 5. Goods / Service Receipts
+app.get('/api/companies/:companyId/procurement/goods-receipts', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listGoodsReceipts(req.params.companyId);
+    res.json({ goodsReceipts: list });
+  } catch (error: any) {
+    logger.error('Failed to list GRNs', error);
+    res.status(500).json({ error: 'Failed to retrieve Goods Receipts' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/goods-receipts', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const grn = await procurementRepository.createGoodsReceipt(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ goodsReceipt: grn });
+  } catch (error: any) {
+    logger.error('Failed to create GRN', error);
+    res.status(400).json({ error: error.message || 'Failed to confirm receipt' });
+  }
+});
+
+app.delete('/api/companies/:companyId/procurement/goods-receipts/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const result = await procurementRepository.deleteGoodsReceipt(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to cancel GRN', error);
+    res.status(400).json({ error: error.message || 'Failed to cancel receipt' });
+  }
+});
+
+// 6. Supplier Bills
+app.get('/api/companies/:companyId/procurement/bills', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listSupplierBills(req.params.companyId);
+    res.json({ bills: list });
+  } catch (error: any) {
+    logger.error('Failed to list bills', error);
+    res.status(500).json({ error: 'Failed to retrieve bills' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/bills/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const bill = await procurementRepository.getSupplierBill(req.params.companyId, Number(req.params.id));
+    if (!bill) return res.status(404).json({ error: 'Bill not found' });
+    res.json({ bill });
+  } catch (error: any) {
+    logger.error('Failed to get bill', error);
+    res.status(500).json({ error: 'Failed to retrieve bill details' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/bills', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const bill = await procurementRepository.createSupplierBill(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ bill });
+  } catch (error: any) {
+    logger.error('Failed to create bill', error);
+    res.status(400).json({ error: error.message || 'Failed to create bill' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/bills/:id/post', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const bill = await procurementRepository.postSupplierBill(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ bill });
+  } catch (error: any) {
+    logger.error('Failed to post bill', error);
+    res.status(400).json({ error: error.message || 'Failed to post' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/bills/:id/void', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    const bill = await procurementRepository.voidSupplierBill(req.params.companyId, Number(req.params.id), reason, (req as any).user?.uid || 'admin');
+    res.json({ bill });
+  } catch (error: any) {
+    logger.error('Failed to void bill', error);
+    res.status(400).json({ error: error.message || 'Failed to void' });
+  }
+});
+
+app.delete('/api/companies/:companyId/procurement/bills/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const result = await procurementRepository.deleteSupplierBill(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete bill', error);
+    res.status(400).json({ error: error.message || 'Failed to delete' });
+  }
+});
+
+// 7. Supplier Payments
+app.get('/api/companies/:companyId/procurement/payments', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await procurementRepository.listSupplierPayments(req.params.companyId);
+    res.json({ payments: list });
+  } catch (error: any) {
+    logger.error('Failed to list payments', error);
+    res.status(500).json({ error: 'Failed to retrieve payments' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/payments/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pay = await procurementRepository.getSupplierPayment(req.params.companyId, Number(req.params.id));
+    if (!pay) return res.status(404).json({ error: 'Payment not found' });
+    res.json({ payment: pay });
+  } catch (error: any) {
+    logger.error('Failed to get payment', error);
+    res.status(500).json({ error: 'Failed to retrieve payment details' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/payments', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pay = await procurementRepository.createSupplierPayment(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ payment: pay });
+  } catch (error: any) {
+    logger.error('Failed to create payment', error);
+    res.status(400).json({ error: error.message || 'Failed to create payment' });
+  }
+});
+
+app.post('/api/companies/:companyId/procurement/payments/:id/void', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pay = await procurementRepository.voidSupplierPayment(req.params.companyId, Number(req.params.id), (req as any).user?.uid || 'admin');
+    res.json({ payment: pay });
+  } catch (error: any) {
+    logger.error('Failed to void payment', error);
+    res.status(400).json({ error: error.message || 'Failed to void' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/payments/:id/pdf', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const pay = await procurementRepository.getSupplierPayment(req.params.companyId, Number(req.params.id));
+    if (!pay) return res.status(404).send('Payment not found');
+
+    const pdf = await procurementDocumentService.generatePaymentVoucherPDF(pay);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Payment_${pay.paymentNumber}.pdf"`);
+    res.send(pdf);
+  } catch (error: any) {
+    logger.error('Failed to generate payment voucher PDF', error);
+    res.status(500).send('Failed to generate PDF');
+  }
+});
+
+// 8. Supplier Statements & Reports
+app.get('/api/companies/:companyId/procurement/suppliers/:id/statement', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { dateFrom, dateTo, branchId } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).json({ error: 'dateFrom and dateTo are required' });
+    const stmt = await procurementRepository.getSupplierStatement(
+      req.params.companyId,
+      Number(req.params.id),
+      String(dateFrom),
+      String(dateTo),
+      branchId ? String(branchId) : undefined
+    );
+    res.json({ statement: stmt });
+  } catch (error: any) {
+    logger.error('Failed to get supplier statement', error);
+    res.status(400).json({ error: error.message || 'Failed to calculate statement' });
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/suppliers/:id/statement/pdf', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { dateFrom, dateTo, branchId } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).send('dateFrom and dateTo are required');
+    const stmt = await procurementRepository.getSupplierStatement(
+      req.params.companyId,
+      Number(req.params.id),
+      String(dateFrom),
+      String(dateTo),
+      branchId ? String(branchId) : undefined
+    );
+    const pdf = await procurementDocumentService.generateSupplierStatementPDF(stmt);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Statement_${stmt.supplier.code}.pdf"`);
+    res.send(pdf);
+  } catch (error: any) {
+    logger.error('Failed to generate statement PDF', error);
+    res.status(500).send('Failed to generate PDF');
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/suppliers/:id/statement/excel', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { dateFrom, dateTo, branchId } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).send('dateFrom and dateTo are required');
+    const stmt = await procurementRepository.getSupplierStatement(
+      req.params.companyId,
+      Number(req.params.id),
+      String(dateFrom),
+      String(dateTo),
+      branchId ? String(branchId) : undefined
+    );
+    const excelBuffer = await procurementDocumentService.generateSupplierStatementExcel(stmt);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Statement_${stmt.supplier.code}.xlsx"`);
+    res.send(excelBuffer);
+  } catch (error: any) {
+    logger.error('Failed to generate statement Excel', error);
+    res.status(500).send('Failed to generate Excel statement');
+  }
+});
+
+app.get('/api/companies/:companyId/procurement/reports/aging', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const report = await procurementRepository.getAPAgingReport(req.params.companyId);
+    res.json({ agingReport: report });
+  } catch (error: any) {
+    logger.error('Failed to get AP aging report', error);
+    res.status(500).json({ error: 'Failed to generate aging report' });
+  }
+});
+
+// ============================================================================
+// PROJECTS, SUBCONTRACTS, BILLING PROFILES & WORKFORCE DEPLOYMENT API ROUTES
+// ============================================================================
+
+// 1. Billing Profiles & Authorizations
+app.get('/api/companies/:companyId/projects/billing-profiles', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await projectsRepository.listBillingProfiles(req.params.companyId);
+    res.json({ billingProfiles: list });
+  } catch (error: any) {
+    logger.error('Failed to list billing profiles', error);
+    res.status(500).json({ error: 'Failed to retrieve billing profiles' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/billing-profiles', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const profile = await projectsRepository.createBillingProfile(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ billingProfile: profile });
+  } catch (error: any) {
+    logger.error('Failed to create billing profile', error);
+    res.status(400).json({ error: error.message || 'Failed to create billing profile' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/billing-profiles/:id/authorizations', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid billing profile ID' });
+    const auth = await projectsRepository.createBillingAuthorization(req.params.companyId, {
+      ...req.body,
+      billingProfileId: id,
+    }, (req as any).user?.uid || 'admin');
+    res.status(201).json({ authorization: auth });
+  } catch (error: any) {
+    logger.error('Failed to create billing authorization', error);
+    res.status(400).json({ error: error.message || 'Failed to create authorization' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects/billing-profiles/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid billing profile ID' });
+    const profile = await projectsRepository.getBillingProfile(req.params.companyId, id);
+    if (!profile) return res.status(404).json({ error: 'Billing profile not found' });
+    res.json({ billingProfile: profile });
+  } catch (error: any) {
+    logger.error('Failed to get billing profile', error);
+    res.status(500).json({ error: 'Failed to retrieve billing profile' });
+  }
+});
+
+app.put('/api/companies/:companyId/projects/billing-profiles/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid billing profile ID' });
+    const profile = await projectsRepository.updateBillingProfile(req.params.companyId, id, req.body, (req as any).user?.uid || 'admin');
+    res.json({ billingProfile: profile });
+  } catch (error: any) {
+    logger.error('Failed to update billing profile', error);
+    res.status(400).json({ error: error.message || 'Failed to update billing profile' });
+  }
+});
+
+// 2. External Workers (Manpower Suppliers)
+app.post('/api/companies/:companyId/projects/external-workers/bulk-delete/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { workerIds } = req.body;
+    const preflight = await projectsRepository.preflightBulkDeleteExternalWorkers(req.params.companyId, workerIds);
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight bulk delete workers', error);
+    res.status(400).json({ error: error.message || 'Failed bulk preflight' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/external-workers/bulk-delete', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { workerIds, reason } = req.body;
+    const result = await projectsRepository.bulkDeleteExternalWorkers(req.params.companyId, {
+      workerIds,
+      reason,
+      actorId: (req as any).user?.uid || 'admin',
+    });
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to bulk delete workers', error);
+    res.status(400).json({ error: error.message || 'Failed bulk delete' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects/external-workers', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await projectsRepository.listExternalWorkers(req.params.companyId, {
+      status: req.query.status as string,
+      supplierId: req.query.supplierId ? Number(req.query.supplierId) : undefined,
+    });
+    res.json({ externalWorkers: list });
+  } catch (error: any) {
+    logger.error('Failed to list external workers', error);
+    res.status(500).json({ error: 'Failed to retrieve external workers' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/external-workers', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const worker = await projectsRepository.createExternalWorker(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ externalWorker: worker });
+  } catch (error: any) {
+    logger.error('Failed to create external worker', error);
+    res.status(400).json({ error: error.message || 'Failed to create worker' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects/external-workers/:id/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid worker ID' });
+    const preflight = await projectsRepository.preflightDeleteExternalWorker(req.params.companyId, id);
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight delete worker', error);
+    res.status(400).json({ error: error.message || 'Failed to preflight' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects/external-workers/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid worker ID' });
+    const worker = await projectsRepository.getExternalWorker(req.params.companyId, id);
+    if (!worker) return res.status(404).json({ error: 'Worker not found' });
+    res.json({ externalWorker: worker });
+  } catch (error: any) {
+    logger.error('Failed to get external worker', error);
+    res.status(500).json({ error: 'Failed to retrieve worker' });
+  }
+});
+
+app.put('/api/companies/:companyId/projects/external-workers/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid worker ID' });
+    const worker = await projectsRepository.updateExternalWorker(req.params.companyId, id, req.body, (req as any).user?.uid || 'admin');
+    res.json({ externalWorker: worker });
+  } catch (error: any) {
+    logger.error('Failed to update external worker', error);
+    res.status(400).json({ error: error.message || 'Failed to update worker' });
+  }
+});
+
+app.delete('/api/companies/:companyId/projects/external-workers/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid worker ID' });
+    const { reason } = req.body;
+    const result = await projectsRepository.deleteExternalWorker(req.params.companyId, id, (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete worker', error);
+    res.status(400).json({ error: error.message || 'Failed to delete worker' });
+  }
+});
+
+// 3. Workforce Deployments (Unified Internal + External)
+app.post('/api/companies/:companyId/projects/deployments/bulk', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const result = await projectsRepository.bulkDeployWorkers(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ result });
+  } catch (error: any) {
+    logger.error('Failed to bulk deploy workers', error);
+    res.status(400).json({ error: error.message || 'Failed to bulk deploy' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects/deployments', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await projectsRepository.listDeployments(req.params.companyId, {
+      projectId: req.query.projectId ? Number(req.query.projectId) : undefined,
+      workforceType: req.query.workforceType as string,
+      status: req.query.status as string,
+    });
+    res.json({ deployments: list });
+  } catch (error: any) {
+    logger.error('Failed to list deployments', error);
+    res.status(500).json({ error: 'Failed to retrieve deployments' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/deployments', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const dep = await projectsRepository.createDeployment(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ deployment: dep });
+  } catch (error: any) {
+    logger.error('Failed to create deployment', error);
+    res.status(400).json({ error: error.message || 'Failed to create deployment' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/deployments/:id/transfer', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid deployment ID' });
+    const transferred = await projectsRepository.transferDeployment(req.params.companyId, id, req.body, (req as any).user?.uid || 'admin');
+    res.json({ deployment: transferred });
+  } catch (error: any) {
+    logger.error('Failed to transfer deployment', error);
+    res.status(400).json({ error: error.message || 'Failed to transfer' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/deployments/:id/end', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid deployment ID' });
+    const ended = await projectsRepository.endDeployment(req.params.companyId, id, (req as any).user?.uid || 'admin', req.body.reason);
+    res.json({ deployment: ended });
+  } catch (error: any) {
+    logger.error('Failed to end deployment', error);
+    res.status(400).json({ error: error.message || 'Failed to end deployment' });
+  }
+});
+
+app.delete('/api/companies/:companyId/projects/deployments/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid deployment ID' });
+    const result = await projectsRepository.deleteDeployment(req.params.companyId, id, (req as any).user?.uid || 'admin');
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete deployment', error);
+    res.status(400).json({ error: error.message || 'Failed to delete deployment' });
+  }
+});
+
+// 4. External Labour Settlements
+app.get('/api/companies/:companyId/projects/labour-settlements', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await projectsRepository.listLabourSettlements(req.params.companyId, req.query.projectId ? Number(req.query.projectId) : undefined);
+    res.json({ labourSettlements: list });
+  } catch (error: any) {
+    logger.error('Failed to list labour settlements', error);
+    res.status(500).json({ error: 'Failed to retrieve settlements' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/labour-settlements', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const settlement = await projectsRepository.createLabourSettlement(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ labourSettlement: settlement });
+  } catch (error: any) {
+    logger.error('Failed to create labour settlement', error);
+    res.status(400).json({ error: error.message || 'Failed to create settlement' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/labour-settlements/:id/approve', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid settlement ID' });
+    const settlement = await projectsRepository.approveLabourSettlement(req.params.companyId, id, (req as any).user?.uid || 'admin');
+    res.json({ labourSettlement: settlement });
+  } catch (error: any) {
+    logger.error('Failed to approve labour settlement', error);
+    res.status(400).json({ error: error.message || 'Failed to approve' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/labour-settlements/:id/create-bill', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid settlement ID' });
+    const result = await projectsRepository.createSupplierBillFromSettlement(
+      req.params.companyId,
+      id,
+      req.body.branchId || 'main_branch',
+      (req as any).user?.uid || 'admin'
+    );
+    res.status(201).json({ result });
+  } catch (error: any) {
+    logger.error('Failed to generate supplier bill from labour settlement', error);
+    res.status(400).json({ error: error.message || 'Failed to create bill' });
+  }
+});
+
+// 5. Projects Master & Actions
+app.post('/api/companies/:companyId/projects/bulk-delete/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { projectIds } = req.body;
+    const preflight = await projectsRepository.preflightBulkDeleteProjects(req.params.companyId, projectIds);
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight bulk delete projects', error);
+    res.status(400).json({ error: error.message || 'Failed to preflight bulk delete' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects/bulk-delete', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const { projectIds, reason } = req.body;
+    const result = await projectsRepository.bulkDeleteProjects(req.params.companyId, {
+      projectIds,
+      reason,
+      actorId: (req as any).user?.uid || 'admin',
+    });
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to bulk delete projects', error);
+    res.status(400).json({ error: error.message || 'Failed bulk delete' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const list = await projectsRepository.listProjects(req.params.companyId, {
+      status: req.query.status as string,
+      clientId: req.query.clientId ? Number(req.query.clientId) : undefined,
+    });
+    res.json({ projects: list });
+  } catch (error: any) {
+    logger.error('Failed to list projects', error);
+    res.status(500).json({ error: 'Failed to retrieve projects' });
+  }
+});
+
+app.post('/api/companies/:companyId/projects', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const project = await projectsRepository.createProject(req.params.companyId, req.body, (req as any).user?.uid || 'admin');
+    res.status(201).json({ project });
+  } catch (error: any) {
+    logger.error('Failed to create project', error);
+    res.status(400).json({ error: error.message || 'Failed to create project' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects/:id/preflight', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid project ID' });
+    const preflight = await projectsRepository.preflightDeleteProject(req.params.companyId, id);
+    res.json({ preflight });
+  } catch (error: any) {
+    logger.error('Failed to preflight project delete', error);
+    res.status(400).json({ error: error.message || 'Failed to preflight delete' });
+  }
+});
+
+app.get('/api/companies/:companyId/projects/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid project ID' });
+    const project = await projectsRepository.getProject(req.params.companyId, id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    res.json({ project });
+  } catch (error: any) {
+    logger.error('Failed to get project', error);
+    res.status(500).json({ error: 'Failed to retrieve project details' });
+  }
+});
+
+app.put('/api/companies/:companyId/projects/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid project ID' });
+    const project = await projectsRepository.updateProject(req.params.companyId, id, req.body, (req as any).user?.uid || 'admin');
+    res.json({ project });
+  } catch (error: any) {
+    logger.error('Failed to update project', error);
+    res.status(400).json({ error: error.message || 'Failed to update project' });
+  }
+});
+
+app.delete('/api/companies/:companyId/projects/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) return res.status(400).json({ error: 'Invalid project ID' });
+    const { reason } = req.body;
+    const result = await projectsRepository.deleteProject(req.params.companyId, id, (req as any).user?.uid || 'admin', reason);
+    res.json({ result });
+  } catch (error: any) {
+    logger.error('Failed to delete project', error);
+    res.status(400).json({ error: error.message || 'Failed to delete project' });
   }
 });
 

@@ -111,6 +111,7 @@ describe('Payroll Deterministic Engine & Statutory Compliance', () => {
       netPay: '1250.000',
       bankName: 'NBK',
       iban: 'KW00NBK0000000000000000000000',
+      resultLines: [],
       calculationBreakdown: {} as any,
     };
 
@@ -129,5 +130,183 @@ describe('Payroll Deterministic Engine & Statutory Compliance', () => {
     const lines = sif.split('\n');
     expect(lines[0]).toContain('SCR,CR-123456,NBK-KW,20260930,1250.000,1,KWD');
     expect(lines[1]).toContain('EDR,1,290010101234,KW00NBK0000000000000000000000,KWD,1000.000');
+  });
+
+  it('should generate granular result lines with auditable calculation traces', () => {
+    const input = {
+      employeeId: 'emp_audited_01',
+      employeeNumber: 'EMP-AUDIT-001',
+      nameEn: 'Ahmad Al-Saleh',
+      nameAr: 'أحمد الصالح',
+      nationality: 'Kuwaiti',
+      countryCode: 'KW',
+      baseCurrency: 'KWD',
+      basicSalary: '1200.000',
+      housingAllowance: '300.000',
+      transportAllowance: '50.000',
+      otherAllowances: '20.000',
+      overtimeMinutes: 180, // 3 hours
+      unpaidLeaveDays: 2,
+      loanMonthlyInstallment: '100.000',
+      loanRemainingBalance: '800.000',
+      adjustments: [
+        { id: 'adj_1', type: 'BONUS', amount: '150.000', reason: 'Quarterly Performance' },
+        { id: 'adj_2', type: 'PENALTY', amount: '25.000', reason: 'Safety Violation' },
+      ],
+      bankName: 'Gulf Bank',
+      iban: 'KW99GB0000000000000000000000',
+    };
+
+    const result = PayrollCalculator.calculate(input);
+    expect(result.resultLines.length).toBeGreaterThanOrEqual(7);
+
+    // Verify individual result lines exist and have correct line types
+    const basicLine = result.resultLines.find(l => l.componentCode === 'BASIC');
+    expect(basicLine).toBeDefined();
+    expect(basicLine?.amount).toBe('1200.000');
+    expect(basicLine?.lineType).toBe('EARNING');
+
+    const otLine = result.resultLines.find(l => l.componentCode === 'OVERTIME');
+    expect(otLine).toBeDefined();
+    expect(otLine?.lineType).toBe('EARNING');
+    expect(otLine?.quantity).toBe('3.00 hrs');
+
+    const bonusLine = result.resultLines.find(l => l.componentCode === 'BONUS');
+    expect(bonusLine).toBeDefined();
+    expect(bonusLine?.amount).toBe('150.000');
+
+    const penaltyLine = result.resultLines.find(l => l.componentCode === 'PENALTY');
+    expect(penaltyLine).toBeDefined();
+    expect(penaltyLine?.lineType).toBe('DEDUCTION');
+
+    const unpaidLine = result.resultLines.find(l => l.componentCode === 'UNPAID_LEAVE');
+    expect(unpaidLine).toBeDefined();
+    expect(unpaidLine?.quantity).toBe('2 days');
+
+    const loanLine = result.resultLines.find(l => l.componentCode === 'LOAN_INSTALLMENT');
+    expect(loanLine).toBeDefined();
+    expect(loanLine?.amount).toBe('100.000');
+  });
+
+  it('should enforce statutory ceiling on Kuwait PIFSS (3,000 KWD)', () => {
+    const input = {
+      employeeId: 'emp_exec_01',
+      employeeNumber: 'EMP-EXEC-001',
+      nameEn: 'Mubarak Al-Sabah',
+      nameAr: 'مبارك الصباح',
+      nationality: 'Kuwaiti',
+      countryCode: 'KW',
+      baseCurrency: 'KWD',
+      basicSalary: '4000.000', // Above 3000 KWD ceiling
+      housingAllowance: '1000.000',
+      transportAllowance: '200.000',
+      otherAllowances: '0.000',
+      overtimeMinutes: 0,
+      unpaidLeaveDays: 0,
+      loanMonthlyInstallment: '0.000',
+      loanRemainingBalance: '0.000',
+    };
+
+    const result = PayrollCalculator.calculate(input);
+    // PIFSS contribution base should be capped at 3000.000
+    // Employee 10.5% on 3000 = 315.000 KWD
+    expect(result.statutoryEmployeeContribution).toBe('315.000');
+    // Employer 11.5% on 3000 = 345.000 KWD
+    expect(result.statutoryEmployerContribution).toBe('345.000');
+  });
+
+  it('should evaluate custom mathematical formulas securely without eval()', async () => {
+    const { FormulaEvaluator } = await import('../src/services/payroll/formula-evaluator.ts');
+
+    const ctx = {
+      BASIC: '1200.000',
+      HOUSING: '300.000',
+      DAYS_WORKED: '26',
+    };
+
+    // 1. Percentage formula
+    const r1 = FormulaEvaluator.evaluate('BASIC * 0.15 + HOUSING * 0.10', ctx);
+    // 1200 * 0.15 = 180, 300 * 0.10 = 30 -> 210.000
+    expect(r1.toFixed(3)).toBe('210.000');
+
+    // 2. Parentheses & precedence formula
+    const r2 = FormulaEvaluator.evaluate('(BASIC + HOUSING) / 30 * 2', ctx);
+    // 1500 / 30 = 50 * 2 = 100
+    expect(r2.toFixed(3)).toBe('100.000');
+
+    // 3. Syntax validation check
+    expect(FormulaEvaluator.validate('BASIC * 0.20 + 50').isValid).toBe(true);
+    expect(FormulaEvaluator.validate('BASIC * * 0.20').isValid).toBe(false);
+  });
+
+  it('should validate payroll batches and flag blocking and warning exceptions', async () => {
+    const { PayrollValidatorService } = await import('../src/services/payroll/payroll-validator.service.ts');
+
+    // Test with excessive deductions and negative net pay
+    const invalidItems = [
+      {
+        employeeId: 'emp_err_1',
+        employeeNumber: 'EMP-ERR-01',
+        grossPay: '500.000',
+        totalDeductions: '600.000', // Deductions exceed earnings
+        netPay: '-100.000',
+        currency: 'KWD',
+      },
+      {
+        employeeId: 'emp_err_2',
+        employeeNumber: 'EMP-ERR-02',
+        grossPay: '800.000',
+        totalDeductions: '450.000', // Exceeds 50%
+        netPay: '350.000',
+        currency: 'KWD',
+      }
+    ];
+
+    const result = PayrollValidatorService.validatePostCalculation(invalidItems);
+    expect(result.isValid).toBe(false); // Has blocking issue
+    expect(result.blockingCount).toBe(1);
+    expect(result.issues.some(i => i.code === 'NEGATIVE_NET_PAY')).toBe(true);
+    expect(result.issues.some(i => i.code === 'EXCESSIVE_DEDUCTION_RATIO')).toBe(true);
+  });
+
+  it('should generate official corporate bilingual payslip PDF with valid PDF binary signature', async () => {
+    const { PayslipPdfService } = await import('../src/services/payroll/payslip-pdf.service.ts');
+
+    const pdfBuffer = await PayslipPdfService.generateSinglePayslip({
+      companyNameEn: 'GulfHive Global Logistics W.L.L.',
+      companyNameAr: 'شركة جلف هايف للخدمات اللوجستية ذ.م.م',
+      companyCr: '12345678',
+      periodYear: 2026,
+      periodMonth: 9,
+      runNumber: 'PRUN-2026-09-0001',
+      employeeNumber: 'EMP-2026-0045',
+      employeeNameEn: 'Khaled Al-Rashidi',
+      employeeNameAr: 'خالد الرشيدي',
+      departmentName: 'Operations',
+      designationName: 'Senior Logistics Specialist',
+      bankName: 'National Bank of Kuwait',
+      iban: 'KW00NBK0000000000000000000000',
+      currency: 'KWD',
+      basicSalary: '1200.000',
+      housingAllowance: '300.000',
+      transportAllowance: '50.000',
+      otherAllowances: '0.000',
+      overtimeAmount: '0.000',
+      overtimeHours: '0.00',
+      unpaidLeaveDeduction: '0.000',
+      unpaidLeaveDays: 0,
+      loanDeduction: '0.000',
+      statutoryEmployeeContribution: '162.750',
+      statutoryEmployerContribution: '178.250',
+      grossPay: '1550.000',
+      totalDeductions: '162.750',
+      netPay: '1387.250',
+    });
+
+    expect(pdfBuffer).toBeInstanceOf(Buffer);
+    expect(pdfBuffer.length).toBeGreaterThan(1000);
+    // Standard PDF file signature check
+    const header = pdfBuffer.slice(0, 5).toString('ascii');
+    expect(header).toBe('%PDF-');
   });
 });

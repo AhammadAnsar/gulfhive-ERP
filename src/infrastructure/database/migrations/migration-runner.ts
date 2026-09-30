@@ -43,6 +43,8 @@ export class MigrationRunner {
     const m0004Path = path.resolve(__dirname, '0004_identity_security_authorization.sql');
     const m0005Path = path.resolve(__dirname, '0005_people_employee_module.sql');
     const m0006Path = path.resolve(__dirname, '0006_time_attendance_timesheet.sql');
+    const m0007Path = path.resolve(__dirname, '0007_leave_overtime_policy_module.sql');
+    const m0008Path = path.resolve(__dirname, '0008_payroll_engine_production.sql');
 
     const migrations: MigrationFile[] = [];
 
@@ -83,6 +85,22 @@ export class MigrationRunner {
         version: 6,
         name: '0006_time_attendance_timesheet.sql',
         sql: fs.readFileSync(m0006Path, 'utf8'),
+      });
+    }
+
+    if (fs.existsSync(m0007Path)) {
+      migrations.push({
+        version: 7,
+        name: '0007_leave_overtime_policy_module.sql',
+        sql: fs.readFileSync(m0007Path, 'utf8'),
+      });
+    }
+
+    if (fs.existsSync(m0008Path)) {
+      migrations.push({
+        version: 8,
+        name: '0008_payroll_engine_production.sql',
+        sql: fs.readFileSync(m0008Path, 'utf8'),
       });
     }
 

@@ -5,7 +5,7 @@
 
 import { eq, desc, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.ts';
-import { tenants, branches, users, userTenants, roles, permissions, rolePermissions, auditLogs } from '../../../db/schema.ts';
+import { tenants, branches, users, userTenants, roles, permissions, rolePermissions, auditLogs, documentSequences } from '../../../db/schema.ts';
 import { logger } from '../../../core/logging/logger.ts';
 
 export interface CreateCompanyInput {
@@ -84,20 +84,38 @@ export class CompanyRepository {
   }
 
   public async createCompanyWithMainBranchAndAdmin(input: CreateCompanyInput) {
+    const cleanCode = input.code.toUpperCase().trim();
+
+    // Idempotency pre-check: if this exact company code was already established with main branch, return it gracefully
+    const existing = await db.select().from(tenants).where(eq(tenants.code, cleanCode)).limit(1);
+    if (existing.length > 0) {
+      const existingTenant = existing[0];
+      const existingBranches = await db.select().from(branches).where(eq(branches.tenantId, existingTenant.id)).limit(1);
+      const existingUsers = await db.select().from(users).where(eq(users.tenantId, existingTenant.id)).limit(1);
+      if (existingBranches.length > 0) {
+        return {
+          tenant: existingTenant,
+          branch: existingBranches[0],
+          user: existingUsers[0] || null,
+        };
+      }
+      throw new Error(`Company code '${input.code}' is already registered.`);
+    }
+
     return db.transaction(async (tx) => {
-      // 1. Verify company code is unique
-      const existing = await tx.select().from(tenants).where(eq(tenants.code, input.code.toUpperCase().trim())).limit(1);
-      if (existing.length > 0) {
+      // 1. Verify company code is unique within transaction
+      const inTxExisting = await tx.select().from(tenants).where(eq(tenants.code, cleanCode)).limit(1);
+      if (inTxExisting.length > 0) {
         throw new Error(`Company code '${input.code}' is already registered.`);
       }
 
-      const tenantId = `tenant_${input.code.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
+      const tenantId = `tenant_${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
       const branchId = `branch_main_${tenantId}`;
 
       // 2. Insert Tenant
       const insertedTenants = await tx.insert(tenants).values({
         id: tenantId,
-        code: input.code.toUpperCase().trim(),
+        code: cleanCode,
         legalNameEn: input.legalNameEn.trim(),
         legalNameAr: input.legalNameAr.trim(),
         tradeNameEn: input.tradeNameEn?.trim() || null,
@@ -175,7 +193,39 @@ export class CompanyRepository {
         },
       });
 
-      // 6. Record immutable Audit Log
+      // 6. Initialize default central document sequences for new enterprise
+      const defaultDocumentTypes = [
+        { type: 'EMPLOYEE', prefix: 'EMP' },
+        { type: 'TIMESHEET', prefix: 'TS' },
+        { type: 'INVOICE', prefix: 'INV' },
+        { type: 'BILL', prefix: 'BILL' },
+        { type: 'PAYROLL', prefix: 'PAY' },
+        { type: 'PROJECT', prefix: 'PRJ' },
+        { type: 'JOURNAL', prefix: 'JRN' },
+        { type: 'PAYMENT', prefix: 'PAY' },
+        { type: 'RECEIPT', prefix: 'RCT' },
+        { type: 'QUOTATION', prefix: 'QT' },
+      ];
+
+      for (const item of defaultDocumentTypes) {
+        await tx.insert(documentSequences).values({
+          id: `seq_${item.type.toLowerCase()}_${tenant.id}`,
+          tenantId: tenant.id,
+          documentType: item.type,
+          prefix: item.prefix,
+          suffix: '',
+          separator: '-',
+          includeYear: true,
+          includeMonth: false,
+          paddingLength: 5,
+          nextNumber: 1,
+          resetPolicy: 'NEVER',
+          status: 'ACTIVE',
+          createdBy: input.adminUid || 'system',
+        }).onConflictDoNothing();
+      }
+
+      // 7. Record immutable Audit Log
       await tx.insert(auditLogs).values({
         tenantId: tenant.id,
         actorId: input.adminUid,

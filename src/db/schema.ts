@@ -562,14 +562,17 @@ export const employeeContracts = pgTable('employee_contracts', {
  */
 export const employeeSalaries = pgTable('employee_salaries', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  salaryStructureId: varchar('salary_structure_id', { length: 64 }),
   currency: varchar('currency', { length: 3 }).notNull(), // KWD, SAR, AED, etc.
   basicSalary: text('basic_salary').notNull(),
   housingAllowance: text('housing_allowance').default('0.000').notNull(),
   transportAllowance: text('transport_allowance').default('0.000').notNull(),
   foodAllowance: text('food_allowance').default('0.000').notNull(),
   otherAllowances: text('other_allowances').default('0.000').notNull(),
+  prorationPolicy: varchar('proration_policy', { length: 32 }).default('CALENDAR_DAYS'),
   effectiveDate: timestamp('effective_date', { withTimezone: true }).notNull(),
   effectiveTo: timestamp('effective_to', { withTimezone: true }),
   isActive: boolean('is_active').default(true).notNull(),
@@ -1089,24 +1092,97 @@ export const holidays = pgTable('holidays', {
 });
 
 /**
- * 24. Leave Types Table (Time Module)
+ * 24. Leave Types Table (Leave & Time Module)
  */
 export const leaveTypes = pgTable('leave_types', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
-  code: varchar('code', { length: 32 }).notNull(), // ANNUAL, SICK, HAJJ, MATERNITY, COMPASSIONATE, UNPAID
+  code: varchar('code', { length: 32 }).notNull(), // ANNUAL, SICK, HAJJ, MATERNITY, COMPASSIONATE, UNPAID, CUSTOM
   nameEn: text('name_en').notNull(),
   nameAr: text('name_ar').notNull(),
+  category: varchar('category', { length: 32 }).notNull().default('ANNUAL'), // ANNUAL, SICK, UNPAID, EMERGENCY, MATERNITY, HAJJ, STUDY, CUSTOM
   defaultDaysPerYear: integer('default_days_per_year').notNull().default(30),
   isPaid: boolean('is_paid').notNull().default(true),
   requiresApproval: boolean('requires_approval').notNull().default(true),
+  requiresAttachment: boolean('requires_attachment').notNull().default(false),
   statutoryReference: text('statutory_reference'),
+  status: varchar('status', { length: 20 }).notNull().default('ACTIVE'), // ACTIVE, ARCHIVED
   isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
+
+/**
+ * 24b. Leave Policies Table (Versioned Accrual & Carry Forward Rules)
+ */
+export const leavePolicies = pgTable('leave_policies', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  leaveTypeId: varchar('leave_type_id', { length: 64 }).notNull().references(() => leaveTypes.id, { onDelete: 'cascade' }),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(), // YYYY-MM-DD
+  effectiveTo: varchar('effective_to', { length: 10 }), // YYYY-MM-DD (null = active)
+  accrualMethod: varchar('accrual_method', { length: 32 }).notNull().default('ANNUAL_GRANT'), // ANNUAL_GRANT, MONTHLY_ACCRUAL, DAILY_ACCRUAL, ANNIVERSARY_BASED, CUSTOM
+  annualEntitlement: numeric('annual_entitlement', { precision: 7, scale: 2 }).notNull().default('30.00'),
+  eligibilityMonths: integer('eligibility_months').notNull().default(0),
+  carryForwardEnabled: boolean('carry_forward_enabled').notNull().default(true),
+  carryForwardLimit: numeric('carry_forward_limit', { precision: 7, scale: 2 }).notNull().default('5.00'),
+  carryForwardExpiryMonths: integer('carry_forward_expiry_months').notNull().default(3),
+  encashmentAllowed: boolean('encashment_allowed').notNull().default(false),
+  negativeBalanceAllowed: boolean('negative_balance_allowed').notNull().default(false),
+  maximumConsecutiveDays: integer('maximum_consecutive_days'),
+  excludeRestDays: boolean('exclude_rest_days').notNull().default(true),
+  excludeHolidays: boolean('exclude_holidays').notNull().default(true),
+  status: varchar('status', { length: 20 }).notNull().default('ACTIVE'), // ACTIVE, ARCHIVED
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 25. Employee Leave Entitlements Table (Period Quotas)
+ */
+export const employeeLeaveEntitlements = pgTable('employee_leave_entitlements', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  leavePolicyId: varchar('leave_policy_id', { length: 64 }).notNull().references(() => leavePolicies.id, { onDelete: 'cascade' }),
+  periodStart: varchar('period_start', { length: 10 }).notNull(), // YYYY-MM-DD
+  periodEnd: varchar('period_end', { length: 10 }).notNull(), // YYYY-MM-DD
+  openingBalance: numeric('opening_balance', { precision: 7, scale: 2 }).notNull().default('0.00'),
+  accrued: numeric('accrued', { precision: 7, scale: 2 }).notNull().default('0.00'),
+  used: numeric('used', { precision: 7, scale: 2 }).notNull().default('0.00'),
+  adjusted: numeric('adjusted', { precision: 7, scale: 2 }).notNull().default('0.00'),
+  carriedForward: numeric('carried_forward', { precision: 7, scale: 2 }).notNull().default('0.00'),
+  status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 25b. Authoritative Leave Ledger Table (Transaction-Based Derived Balances)
+ */
+export const leaveLedger = pgTable('leave_ledger', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  leaveTypeId: varchar('leave_type_id', { length: 64 }).notNull().references(() => leaveTypes.id, { onDelete: 'cascade' }),
+  transactionDate: varchar('transaction_date', { length: 10 }).notNull(), // YYYY-MM-DD
+  transactionType: varchar('transaction_type', { length: 32 }).notNull(), // OPENING, ACCRUAL, USED, ADJUSTMENT, CARRY_FORWARD, ENCASHMENT, EXPIRY
+  quantity: numeric('quantity', { precision: 7, scale: 2 }).notNull(), // positive for credits, negative for debits
+  referenceType: varchar('reference_type', { length: 32 }), // LEAVE_REQUEST, MANUAL_ADJUSTMENT, YEAR_END_ROLLOVER
+  referenceId: varchar('reference_id', { length: 64 }),
+  notes: text('notes'),
+  createdBy: text('created_by').notNull().default('system'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /**
- * 25. Leave Allocations / Balances Table (Time Module)
+ * 25c. Legacy Leave Allocations Table (Maintained for Backward Compatibility)
  */
 export const leaveAllocations = pgTable('leave_allocations', {
   id: varchar('id', { length: 64 }).primaryKey(),
@@ -1121,22 +1197,33 @@ export const leaveAllocations = pgTable('leave_allocations', {
 });
 
 /**
- * 26. Leave Requests Table (Time Module)
+ * 26. Leave Requests Table (Leave & Time Module)
  */
 export const leaveRequests = pgTable('leave_requests', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
   leaveTypeId: varchar('leave_type_id', { length: 64 }).notNull().references(() => leaveTypes.id, { onDelete: 'restrict' }),
   startDate: timestamp('start_date', { withTimezone: true }).notNull(),
   endDate: timestamp('end_date', { withTimezone: true }).notNull(),
+  startPortion: varchar('start_portion', { length: 20 }).notNull().default('FULL_DAY'), // FULL_DAY, FIRST_HALF, SECOND_HALF
+  endPortion: varchar('end_portion', { length: 20 }).notNull().default('FULL_DAY'), // FULL_DAY, FIRST_HALF, SECOND_HALF
+  calendarDays: integer('calendar_days').notNull().default(1),
   daysRequested: integer('days_requested').notNull(),
+  requestedQuantity: numeric('requested_quantity', { precision: 7, scale: 2 }).notNull().default('1.00'),
   reason: text('reason'),
-  status: varchar('status', { length: 32 }).notNull().default('PENDING'), // PENDING, APPROVED, REJECTED, CANCELLED
+  attachmentId: text('attachment_id'),
+  status: varchar('status', { length: 32 }).notNull().default('PENDING'), // DRAFT, SUBMITTED, PENDING, APPROVED, REJECTED, CANCELLED
   approvedBy: text('approved_by'),
   approvalNotes: text('approval_notes'),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
+  rejectionReason: text('rejection_reason'),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  cancelledBy: text('cancelled_by'),
+  cancellationReason: text('cancellation_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
 
 /**
@@ -1185,7 +1272,30 @@ export const timesheetLines = pgTable('timesheet_lines', {
 });
 
 /**
- * 27c. Overtime Records Table (Time Module)
+ * 27c. Overtime Policies Table (Configurable Overtime Caps, Minimums & Rounding)
+ */
+export const overtimePolicies = pgTable('overtime_policies', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(), // YYYY-MM-DD
+  effectiveTo: varchar('effective_to', { length: 10 }), // YYYY-MM-DD (null = active)
+  eligibilityRule: text('eligibility_rule'),
+  minimumMinutes: integer('minimum_minutes').notNull().default(30), // Minimum threshold
+  roundingRule: varchar('rounding_rule', { length: 32 }).notNull().default('NEAREST_15_MIN'), // EXACT_MINUTE, NEAREST_15_MIN, NEAREST_30_MIN
+  maximumDailyMinutes: integer('maximum_daily_minutes').default(240), // 4h cap
+  maximumWeeklyMinutes: integer('maximum_weekly_minutes').default(960), // 16h cap
+  approvalRequired: boolean('approval_required').notNull().default(true),
+  status: varchar('status', { length: 20 }).notNull().default('ACTIVE'), // ACTIVE, ARCHIVED
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 27d. Overtime Records Table (Time Module)
  */
 export const overtimeRecords = pgTable('overtime_records', {
   id: varchar('id', { length: 64 }).primaryKey(),
@@ -1194,17 +1304,24 @@ export const overtimeRecords = pgTable('overtime_records', {
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
   attendanceId: varchar('attendance_id', { length: 64 }).references(() => attendanceRecords.id, { onDelete: 'set null' }),
   attendanceDayId: varchar('attendance_day_id', { length: 64 }).references(() => attendanceDays.id, { onDelete: 'set null' }),
+  overtimePolicyId: varchar('overtime_policy_id', { length: 64 }).references(() => overtimePolicies.id, { onDelete: 'set null' }),
   date: varchar('date', { length: 10 }).notNull(),
-  overtimeType: varchar('overtime_type', { length: 32 }).notNull(), // REGULAR_DAY, WEEKEND, HOLIDAY, NIGHT, CUSTOM
+  overtimeType: varchar('overtime_type', { length: 32 }).notNull(), // REGULAR_DAY, WEEKEND, HOLIDAY, NIGHT, SPECIAL, CUSTOM
   minutes: integer('minutes').notNull(),
-  source: varchar('source', { length: 32 }).notNull().default('ATTENDANCE'), // ATTENDANCE, MANUAL, SUPERVISOR_OVERRIDE
+  requestedMinutes: integer('requested_minutes'),
+  approvedMinutes: integer('approved_minutes'),
+  source: varchar('source', { length: 32 }).notNull().default('ATTENDANCE'), // ATTENDANCE, MANUAL, SUPERVISOR_OVERRIDE, TIMESHEET
   statutoryRateMultiplier: text('statutory_rate_multiplier').default('1.25'),
   status: varchar('status', { length: 32 }).notNull().default('PENDING'), // PENDING, APPROVED, REJECTED
+  projectId: varchar('project_id', { length: 64 }),
+  siteId: varchar('site_id', { length: 64 }),
   reason: text('reason'),
+  notes: text('notes'),
   approvedBy: text('approved_by'),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
 
 /**
@@ -1242,24 +1359,111 @@ export const employeeLoans = pgTable('employee_loans', {
 });
 
 /**
+ * 30a. Payroll Periods Table
+ * Lifecycle: OPEN, PROCESSING, REVIEW, AWAITING_APPROVAL, APPROVED, POSTED, PAID, CLOSED
+ */
+export const payrollPeriods = pgTable('payroll_periods', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  periodNumber: varchar('period_number', { length: 64 }).notNull(),
+  year: integer('year').notNull(),
+  month: integer('month').notNull(),
+  periodStart: varchar('period_start', { length: 10 }).notNull(), // YYYY-MM-DD
+  periodEnd: varchar('period_end', { length: 10 }).notNull(),     // YYYY-MM-DD
+  paymentDate: varchar('payment_date', { length: 10 }),
+  fiscalYearId: varchar('fiscal_year_id', { length: 64 }),
+  status: varchar('status', { length: 32 }).notNull().default('OPEN'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 30b. Configurable Salary Components Table
+ */
+export const salaryComponents = pgTable('salary_components', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(), // e.g. BASIC, HOUSING, TRANSPORT, OVERTIME, LOAN
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  componentType: varchar('component_type', { length: 32 }).notNull().default('EARNING'), // EARNING, DEDUCTION, EMPLOYER_CONTRIBUTION, INFORMATION
+  calculationType: varchar('calculation_type', { length: 32 }).notNull().default('FIXED'), // FIXED, PERCENTAGE, FORMULA, INPUT
+  formulaExpression: text('formula_expression'),
+  affectsGross: boolean('affects_gross').notNull().default(true),
+  affectsNet: boolean('affects_net').notNull().default(true),
+  affectsOvertimeBase: boolean('affects_overtime_base').notNull().default(false),
+  affectsEosBase: boolean('affects_eos_base').notNull().default(false),
+  displayOrder: integer('display_order').notNull().default(0),
+  status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 30c. Salary Structures Table
+ */
+export const salaryStructures = pgTable('salary_structures', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull().default('2020-01-01'),
+  effectiveTo: varchar('effective_to', { length: 10 }),
+  status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 30d. Salary Structure Components Table
+ */
+export const salaryStructureComponents = pgTable('salary_structure_components', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  salaryStructureId: varchar('salary_structure_id', { length: 64 }).notNull().references(() => salaryStructures.id, { onDelete: 'cascade' }),
+  salaryComponentId: varchar('salary_component_id', { length: 64 }).notNull().references(() => salaryComponents.id, { onDelete: 'cascade' }),
+  calculationMethod: varchar('calculation_method', { length: 32 }).notNull().default('FIXED'), // FIXED, PERCENTAGE, FORMULA
+  valueExpression: text('value_expression').notNull().default('0'),
+  displayOrder: integer('display_order').notNull().default(0),
+});
+
+/**
  * 30. Payroll Runs Table (Payroll Module)
  */
 export const payrollRuns = pgTable('payroll_runs', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  payrollPeriodId: varchar('payroll_period_id', { length: 64 }),
+  payrollNumber: varchar('payroll_number', { length: 64 }),
+  runType: varchar('run_type', { length: 32 }).notNull().default('REGULAR'), // REGULAR, SUPPLEMENTARY, ADJUSTMENT, FINAL_SETTLEMENT
   periodMonth: integer('period_month').notNull(), // 1 - 12
   periodYear: integer('period_year').notNull(),
   startDate: timestamp('start_date', { withTimezone: true }).notNull(),
   endDate: timestamp('end_date', { withTimezone: true }).notNull(),
-  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, VALIDATED, APPROVED, POSTED, PAID
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, VALIDATED, REVIEW, APPROVED, POSTED, PAID, REVERSED
   currency: varchar('currency', { length: 3 }).notNull(),
   totalEmployees: integer('total_employees').notNull().default(0),
   totalGrossPay: text('total_gross_pay').notNull().default('0'),
   totalDeductions: text('total_deductions').notNull().default('0'),
   totalNetPay: text('total_net_pay').notNull().default('0'),
+  ruleSnapshotVersion: varchar('rule_snapshot_version', { length: 32 }).notNull().default('1.0'),
+  calculationVersion: varchar('calculation_version', { length: 32 }).notNull().default('1.0'),
+  calculationTrace: jsonb('calculation_trace'),
   validatedAt: timestamp('validated_at', { withTimezone: true }),
   approvedBy: text('approved_by'),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
+  postedBy: text('posted_by'),
+  postedAt: timestamp('posted_at', { withTimezone: true }),
+  reversalReason: text('reversal_reason'),
+  reversedBy: text('reversed_by'),
+  reversedAt: timestamp('reversed_at', { withTimezone: true }),
   wpsGeneratedAt: timestamp('wps_generated_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -1271,6 +1475,7 @@ export const payrollRuns = pgTable('payroll_runs', {
  */
 export const payrollItems = pgTable('payroll_items', {
   id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
   tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   payrollRunId: varchar('payroll_run_id', { length: 64 }).notNull().references(() => payrollRuns.id, { onDelete: 'cascade' }),
   employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
@@ -1292,7 +1497,106 @@ export const payrollItems = pgTable('payroll_items', {
   paymentMethod: varchar('payment_method', { length: 32 }).notNull().default('WPS_BANK'),
   bankName: text('bank_name'),
   iban: text('iban'),
+  exceptionCount: integer('exception_count').notNull().default(0),
   calculationBreakdown: jsonb('calculation_breakdown').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 31b. Payroll Result Lines Table
+ * Detailed granular result lines with origin and calculation trace
+ */
+export const payrollResultLines = pgTable('payroll_result_lines', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  payrollRunId: varchar('payroll_run_id', { length: 64 }).notNull().references(() => payrollRuns.id, { onDelete: 'cascade' }),
+  payrollItemId: varchar('payroll_item_id', { length: 64 }).notNull().references(() => payrollItems.id, { onDelete: 'cascade' }),
+  salaryComponentId: varchar('salary_component_id', { length: 64 }),
+  componentCodeSnapshot: varchar('component_code_snapshot', { length: 32 }).notNull(),
+  componentNameSnapshot: text('component_name_snapshot').notNull(),
+  lineType: varchar('line_type', { length: 32 }).notNull(), // EARNING, DEDUCTION, EMPLOYER_CONTRIBUTION, INFORMATION
+  quantity: text('quantity'),
+  rate: text('rate'),
+  amount: text('amount').notNull(),
+  sourceType: varchar('source_type', { length: 32 }).notNull().default('CONTRACT'), // CONTRACT, TIME, LEAVE, OVERTIME, ADJUSTMENT, LOAN, STATUTORY, FORMULA
+  sourceId: varchar('source_id', { length: 64 }),
+  calculationRuleReference: text('calculation_rule_reference'),
+  displayOrder: integer('display_order').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 31c. Payroll Adjustments Table
+ */
+export const payrollAdjustments = pgTable('payroll_adjustments', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }).notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  payrollPeriodId: varchar('payroll_period_id', { length: 64 }),
+  salaryComponentId: varchar('salary_component_id', { length: 64 }),
+  type: varchar('type', { length: 32 }).notNull().default('BONUS'), // BONUS, COMMISSION, CORRECTION, REIMBURSEMENT, DEDUCTION, PENALTY, OTHER
+  amount: text('amount').notNull(),
+  quantity: text('quantity'),
+  reason: text('reason').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('PENDING'), // PENDING, APPROVED, REJECTED, PROCESSED
+  effectiveDate: varchar('effective_date', { length: 10 }).notNull(),
+  createdBy: text('created_by'),
+  approvedBy: text('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 31d. Loan Repayment Transactions Table
+ */
+export const loanRepaymentTransactions = pgTable('loan_repayment_transactions', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  loanId: varchar('loan_id', { length: 64 }).notNull().references(() => employeeLoans.id, { onDelete: 'cascade' }),
+  payrollRunId: varchar('payroll_run_id', { length: 64 }),
+  payrollItemId: varchar('payroll_item_id', { length: 64 }),
+  amount: text('amount').notNull(),
+  transactionDate: timestamp('transaction_date', { withTimezone: true }).defaultNow().notNull(),
+  remainingBalanceAfter: text('remaining_balance_after').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 31e. Versioned Country Compliance Statutory Rules Table
+ */
+export const statutoryRules = pgTable('statutory_rules', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  countryCode: varchar('country_code', { length: 2 }).notNull(),
+  ruleType: varchar('rule_type', { length: 32 }).notNull(), // PIFSS, GOSI, OVERTIME, EOSB
+  version: varchar('version', { length: 32 }).notNull(),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(),
+  effectiveTo: varchar('effective_to', { length: 10 }),
+  parameters: jsonb('parameters').notNull(),
+  sourceReference: text('source_reference').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 31f. Payroll Exceptions Table
+ */
+export const payrollExceptions = pgTable('payroll_exceptions', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  numericId: serial('numeric_id'),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  payrollRunId: varchar('payroll_run_id', { length: 64 }).notNull().references(() => payrollRuns.id, { onDelete: 'cascade' }),
+  employeeId: varchar('employee_id', { length: 64 }),
+  severity: varchar('severity', { length: 20 }).notNull().default('WARNING'), // BLOCKING, WARNING, INFO
+  code: varchar('code', { length: 64 }).notNull(),
+  messageEn: text('message_en').notNull(),
+  messageAr: text('message_ar').notNull(),
+  isResolved: boolean('is_resolved').notNull().default(false),
+  resolvedBy: text('resolved_by'),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -1475,3 +1779,1066 @@ export const userTenantsRelations = relations(userTenants, ({ one }) => ({
     references: [branches.id],
   }),
 }));
+
+/**
+ * 40. Clients (Customers) Table
+ */
+export const clients = pgTable('clients', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // ACTIVE, INACTIVE, SUSPENDED, DELETED
+  email: text('email'),
+  phone: text('phone'),
+  website: text('website'),
+  crNumber: text('cr_number'),
+  paymentTermsId: varchar('payment_terms_id', { length: 64 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 40b. Client Contacts Table
+ */
+export const clientContacts = pgTable('client_contacts', {
+  id: serial('id').primaryKey(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  email: text('email'),
+  phone: text('phone'),
+  isPrimary: boolean('is_primary').default(false).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 40c. Client Sites Table
+ */
+export const clientSites = pgTable('client_sites', {
+  id: serial('id').primaryKey(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  addressEn: text('address_en'),
+  addressAr: text('address_ar'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 41. Tax Codes Table
+ */
+export const taxCodes = pgTable('tax_codes', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  rate: text('rate').notNull(),
+  calculationMethod: varchar('calculation_method', { length: 32 }).notNull().default('PERCENTAGE'),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(),
+  effectiveTo: varchar('effective_to', { length: 10 }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 42. Quotations Table
+ */
+export const quotations = pgTable('quotations', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  quotationNumber: varchar('quotation_number', { length: 64 }).notNull(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
+  clientContactId: integer('client_contact_id').references(() => clientContacts.id, { onDelete: 'set null' }),
+  clientSiteId: integer('client_site_id').references(() => clientSites.id, { onDelete: 'set null' }),
+  quotationDate: varchar('quotation_date', { length: 10 }).notNull(),
+  validUntil: varchar('valid_until', { length: 10 }),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentTerms: text('payment_terms'),
+  reference: text('reference'),
+  subject: text('subject'),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, SUBMITTED, APPROVED, SENT, ACCEPTED, REJECTED, EXPIRED, CONVERTED, CANCELLED, DELETED
+  subtotal: text('subtotal').notNull(),
+  discountTotal: text('discount_total').notNull().default('0.000'),
+  taxTotal: text('tax_total').notNull().default('0.000'),
+  grandTotal: text('grand_total').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  approvedBy: text('approved_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 42b. Quotation Lines Table
+ */
+export const quotationLines = pgTable('quotation_lines', {
+  id: serial('id').primaryKey(),
+  quotationId: integer('quotation_id').notNull().references(() => quotations.id, { onDelete: 'cascade' }),
+  itemId: varchar('item_id', { length: 64 }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  unit: varchar('unit', { length: 32 }),
+  unitPrice: text('unit_price').notNull(),
+  discountType: varchar('discount_type', { length: 32 }),
+  discountValue: text('discount_value').default('0.000'),
+  taxCodeId: integer('tax_code_id').references(() => taxCodes.id, { onDelete: 'set null' }),
+  lineSubtotal: text('line_subtotal').notNull(),
+  discountAmount: text('discount_amount').notNull().default('0.000'),
+  taxAmount: text('tax_amount').notNull().default('0.000'),
+  lineTotal: text('line_total').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+/**
+ * 43. Sales Orders Table
+ */
+export const salesOrders = pgTable('sales_orders', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  salesOrderNumber: varchar('sales_order_number', { length: 64 }).notNull(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
+  quotationId: integer('quotation_id').references(() => quotations.id, { onDelete: 'set null' }),
+  orderDate: varchar('order_date', { length: 10 }).notNull(),
+  expectedDeliveryDate: varchar('expected_delivery_date', { length: 10 }),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentTerms: text('payment_terms'),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, CONFIRMED, PARTIALLY_DELIVERED, DELIVERED, PARTIALLY_INVOICED, INVOICED, CANCELLED, CLOSED, DELETED
+  subtotal: text('subtotal').notNull(),
+  discountTotal: text('discount_total').notNull().default('0.000'),
+  taxTotal: text('tax_total').notNull().default('0.000'),
+  grandTotal: text('grand_total').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 43b. Sales Order Lines Table
+ */
+export const salesOrderLines = pgTable('sales_order_lines', {
+  id: serial('id').primaryKey(),
+  salesOrderId: integer('sales_order_id').notNull().references(() => salesOrders.id, { onDelete: 'cascade' }),
+  itemId: varchar('item_id', { length: 64 }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  deliveredQuantity: text('delivered_quantity').notNull().default('0.000'),
+  invoicedQuantity: text('invoiced_quantity').notNull().default('0.000'),
+  unit: varchar('unit', { length: 32 }),
+  unitPrice: text('unit_price').notNull(),
+  discountType: varchar('discount_type', { length: 32 }),
+  discountValue: text('discount_value').default('0.000'),
+  taxCodeId: integer('tax_code_id').references(() => taxCodes.id, { onDelete: 'set null' }),
+  lineSubtotal: text('line_subtotal').notNull(),
+  discountAmount: text('discount_amount').notNull().default('0.000'),
+  taxAmount: text('tax_amount').notNull().default('0.000'),
+  lineTotal: text('line_total').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+/**
+ * 44. Deliveries Table
+ */
+export const deliveries = pgTable('deliveries', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  deliveryNumber: varchar('delivery_number', { length: 64 }).notNull(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
+  salesOrderId: integer('sales_order_id').references(() => salesOrders.id, { onDelete: 'set null' }),
+  deliveryDate: varchar('delivery_date', { length: 10 }).notNull(),
+  clientSiteId: integer('client_site_id').references(() => clientSites.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, CONFIRMED, CANCELLED, DELETED
+  receivedBy: text('received_by'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 44b. Delivery Lines Table
+ */
+export const deliveryLines = pgTable('delivery_lines', {
+  id: serial('id').primaryKey(),
+  deliveryId: integer('delivery_id').notNull().references(() => deliveries.id, { onDelete: 'cascade' }),
+  salesOrderLineId: integer('sales_order_line_id').references(() => salesOrderLines.id, { onDelete: 'set null' }),
+  itemId: varchar('item_id', { length: 64 }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  unit: varchar('unit', { length: 32 }),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+/**
+ * 45. Invoices Table
+ */
+export const invoices = pgTable('invoices', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  invoiceNumber: varchar('invoice_number', { length: 64 }).notNull(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
+  salesOrderId: integer('sales_order_id').references(() => salesOrders.id, { onDelete: 'set null' }),
+  deliveryId: integer('delivery_id').references(() => deliveries.id, { onDelete: 'set null' }),
+  invoiceDate: varchar('invoice_date', { length: 10 }).notNull(),
+  dueDate: varchar('due_date', { length: 10 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentTerms: text('payment_terms'),
+  clientReference: text('client_reference'),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, PENDING_APPROVAL, APPROVED, POSTED, PARTIALLY_PAID, PAID, OVERDUE, CANCELLED, VOIDED, DELETED
+  subtotal: text('subtotal').notNull(),
+  discountTotal: text('discount_total').notNull().default('0.000'),
+  taxTotal: text('tax_total').notNull().default('0.000'),
+  roundingAdjustment: text('rounding_adjustment').notNull().default('0.000'),
+  grandTotal: text('grand_total').notNull(),
+  paidAmount: text('paid_amount').notNull().default('0.000'),
+  outstandingAmount: text('outstanding_amount').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  approvedBy: text('approved_by'),
+  postedAt: timestamp('posted_at', { withTimezone: true }),
+  postedBy: text('posted_by'),
+  voidedAt: timestamp('voided_at', { withTimezone: true }),
+  voidedBy: text('voided_by'),
+  voidReason: text('void_reason'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 45b. Invoice Lines Table
+ */
+export const invoiceLines = pgTable('invoice_lines', {
+  id: serial('id').primaryKey(),
+  invoiceId: integer('invoice_id').notNull().references(() => invoices.id, { onDelete: 'cascade' }),
+  sourceLineType: varchar('source_line_type', { length: 32 }), // SALES_ORDER_LINE, DELIVERY_LINE
+  sourceLineId: integer('source_line_id'),
+  itemId: varchar('item_id', { length: 64 }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  unit: varchar('unit', { length: 32 }),
+  unitPrice: text('unit_price').notNull(),
+  discountType: varchar('discount_type', { length: 32 }),
+  discountValue: text('discount_value').default('0.000'),
+  taxCodeId: integer('tax_code_id').references(() => taxCodes.id, { onDelete: 'set null' }),
+  lineSubtotal: text('line_subtotal').notNull(),
+  discountAmount: text('discount_amount').notNull().default('0.000'),
+  taxAmount: text('tax_amount').notNull().default('0.000'),
+  lineTotal: text('line_total').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+/**
+ * 46. Credit Notes Table
+ */
+export const creditNotes = pgTable('credit_notes', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  creditNoteNumber: varchar('credit_note_number', { length: 64 }).notNull(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
+  invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'set null' }),
+  creditNoteDate: varchar('credit_note_date', { length: 10 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  reason: text('reason').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, POSTED, CANCELLED, VOIDED, DELETED
+  subtotal: text('subtotal').notNull(),
+  taxTotal: text('tax_total').notNull().default('0.000'),
+  grandTotal: text('grand_total').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 46b. Credit Note Lines Table
+ */
+export const creditNoteLines = pgTable('credit_note_lines', {
+  id: serial('id').primaryKey(),
+  creditNoteId: integer('credit_note_id').notNull().references(() => creditNotes.id, { onDelete: 'cascade' }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  unitPrice: text('unit_price').notNull(),
+  taxCodeId: integer('tax_code_id').references(() => taxCodes.id, { onDelete: 'set null' }),
+  lineSubtotal: text('line_subtotal').notNull(),
+  taxAmount: text('tax_amount').notNull().default('0.000'),
+  lineTotal: text('line_total').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+/**
+ * 47. Receipts Table
+ */
+export const receipts = pgTable('receipts', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  receiptNumber: varchar('receipt_number', { length: 64 }).notNull(),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
+  receiptDate: varchar('receipt_date', { length: 10 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentMethod: varchar('payment_method', { length: 32 }).notNull().default('CASH'), // CASH, BANK_TRANSFER, CHECK, CREDIT_CARD, OTHER
+  bankAccountId: varchar('bank_account_id', { length: 64 }),
+  referenceNumber: text('reference_number'),
+  amount: text('amount').notNull(),
+  unallocatedAmount: text('unallocated_amount').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, POSTED, PARTIALLY_ALLOCATED, ALLOCATED, CANCELLED, VOIDED, DELETED
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  postedAt: timestamp('posted_at', { withTimezone: true }),
+  postedBy: text('posted_by'),
+  voidedAt: timestamp('voided_at', { withTimezone: true }),
+  voidedBy: text('voided_by'),
+  voidReason: text('void_reason'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 48. Receipt Allocations Table
+ */
+export const receiptAllocations = pgTable('receipt_allocations', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  receiptId: integer('receipt_id').references(() => receipts.id, { onDelete: 'cascade' }),
+  invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'cascade' }),
+  creditNoteId: integer('credit_note_id').references(() => creditNotes.id, { onDelete: 'cascade' }),
+  allocatedAmount: text('allocated_amount').notNull(),
+  allocationDate: varchar('allocation_date', { length: 10 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 49. Suppliers Table
+ */
+export const suppliers = pgTable('suppliers', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 32 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  email: text('email'),
+  phone: text('phone'),
+  website: text('website'),
+  crNumber: text('cr_number'),
+  vatNumber: text('vat_number'),
+  paymentTermsId: varchar('payment_terms_id', { length: 64 }).default('30 Days'),
+  currency: varchar('currency', { length: 3 }).default('KWD').notNull(),
+  bankName: text('bank_name'),
+  bankIban: text('bank_iban'),
+  bankSwift: text('bank_swift'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // ACTIVE, INACTIVE, DELETED
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 50. Purchase Requests Table
+ */
+export const purchaseRequests = pgTable('purchase_requests', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  requestNumber: varchar('request_number', { length: 64 }).notNull(),
+  requestDate: varchar('request_date', { length: 10 }).notNull(),
+  requestedByEmployeeId: varchar('requested_by_employee_id', { length: 64 }).references(() => employees.id, { onDelete: 'set null' }),
+  departmentId: varchar('department_id', { length: 64 }).references(() => departments.id, { onDelete: 'set null' }),
+  costCenterId: varchar('cost_center_id', { length: 64 }).references(() => costCenters.id, { onDelete: 'set null' }),
+  projectId: varchar('project_id', { length: 64 }),
+  requiredDate: varchar('required_date', { length: 10 }),
+  priority: varchar('priority', { length: 32 }).notNull().default('MEDIUM'), // LOW, MEDIUM, HIGH, URGENT
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, SUBMITTED, PENDING_APPROVAL, APPROVED, PARTIALLY_SOURCED, FULLY_SOURCED, REJECTED, CANCELLED, CLOSED, DELETED
+  purpose: text('purpose'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 51. Purchase Request Lines Table
+ */
+export const purchaseRequestLines = pgTable('purchase_request_lines', {
+  id: serial('id').primaryKey(),
+  purchaseRequestId: integer('purchase_request_id').notNull().references(() => purchaseRequests.id, { onDelete: 'cascade' }),
+  itemId: varchar('item_id', { length: 64 }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  unitId: varchar('unit_id', { length: 32 }),
+  estimatedUnitCost: text('estimated_unit_cost'),
+  requiredDate: varchar('required_date', { length: 10 }),
+  costCenterId: varchar('cost_center_id', { length: 64 }).references(() => costCenters.id, { onDelete: 'set null' }),
+  projectId: varchar('project_id', { length: 64 }),
+  notes: text('notes'),
+});
+
+/**
+ * 52. RFQs Table
+ */
+export const rfqs = pgTable('rfqs', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  rfqNumber: varchar('rfq_number', { length: 64 }).notNull(),
+  rfqDate: varchar('rfq_date', { length: 10 }).notNull(),
+  responseDeadline: varchar('response_deadline', { length: 10 }).notNull(),
+  purchaseRequestId: integer('purchase_request_id').references(() => purchaseRequests.id, { onDelete: 'set null' }),
+  instructions: text('instructions'),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, SENT, CLOSED, CANCELLED, DELETED
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 53. RFQ Suppliers Table
+ */
+export const rfqSuppliers = pgTable('rfq_suppliers', {
+  id: serial('id').primaryKey(),
+  rfqId: integer('rfq_id').notNull().references(() => rfqs.id, { onDelete: 'cascade' }),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 54. Supplier Quotations Table
+ */
+export const supplierQuotations = pgTable('supplier_quotations', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  rfqId: integer('rfq_id').references(() => rfqs.id, { onDelete: 'set null' }),
+  supplierQuoteNumber: varchar('supplier_quote_number', { length: 64 }).notNull(),
+  quoteDate: varchar('quote_date', { length: 10 }).notNull(),
+  validUntil: varchar('valid_until', { length: 10 }),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentTermsId: varchar('payment_terms_id', { length: 64 }).default('30 Days'),
+  deliveryTime: text('delivery_time'),
+  subtotal: text('subtotal').notNull(),
+  discountTotal: text('discount_total').notNull().default('0.000'),
+  taxTotal: text('tax_total').notNull().default('0.000'),
+  grandTotal: text('grand_total').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('PENDING'), // PENDING, SELECTED, REJECTED, DELETED
+  selectionReason: text('selection_reason'),
+  selectedBy: text('selected_by'),
+  selectedAt: timestamp('selected_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 55. Supplier Quotation Lines Table
+ */
+export const supplierQuotationLines = pgTable('supplier_quotation_lines', {
+  id: serial('id').primaryKey(),
+  supplierQuotationId: integer('supplier_quotation_id').notNull().references(() => supplierQuotations.id, { onDelete: 'cascade' }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  unitPrice: text('unit_price').notNull(),
+  discount: text('discount').notNull().default('0.000'),
+  tax: text('tax').notNull().default('0.000'),
+  total: text('total').notNull(),
+});
+
+/**
+ * 56. Purchase Orders Table
+ */
+export const purchaseOrders = pgTable('purchase_orders', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  purchaseOrderNumber: varchar('purchase_order_number', { length: 64 }).notNull(),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  purchaseRequestId: integer('purchase_request_id').references(() => purchaseRequests.id, { onDelete: 'set null' }),
+  rfqId: integer('rfq_id').references(() => rfqs.id, { onDelete: 'set null' }),
+  supplierQuotationId: integer('supplier_quotation_id').references(() => supplierQuotations.id, { onDelete: 'set null' }),
+  orderDate: varchar('order_date', { length: 10 }).notNull(),
+  expectedDeliveryDate: varchar('expected_delivery_date', { length: 10 }),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentTermsId: varchar('payment_terms_id', { length: 64 }).default('30 Days'),
+  supplierReference: text('supplier_reference'),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, PENDING_APPROVAL, APPROVED, SENT, CONFIRMED, PARTIALLY_RECEIVED, FULLY_RECEIVED, PARTIALLY_BILLED, FULLY_BILLED, CLOSED, CANCELLED, DELETED
+  subtotal: text('subtotal').notNull(),
+  discountTotal: text('discount_total').notNull().default('0.000'),
+  taxTotal: text('tax_total').notNull().default('0.000'),
+  roundingAdjustment: text('rounding_adjustment').notNull().default('0.000'),
+  grandTotal: text('grand_total').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  approvedBy: text('approved_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 57. Purchase Order Lines Table
+ */
+export const purchaseOrderLines = pgTable('purchase_order_lines', {
+  id: serial('id').primaryKey(),
+  purchaseOrderId: integer('purchase_order_id').notNull().references(() => purchaseOrders.id, { onDelete: 'cascade' }),
+  itemId: varchar('item_id', { length: 64 }),
+  description: text('description').notNull(),
+  orderedQuantity: text('ordered_quantity').notNull(),
+  receivedQuantity: text('received_quantity').notNull().default('0.000'),
+  billedQuantity: text('billed_quantity').notNull().default('0.000'),
+  returnedQuantity: text('returned_quantity').notNull().default('0.000'),
+  unitPrice: text('unit_price').notNull(),
+  discount: text('discount').notNull().default('0.000'),
+  tax: text('tax').notNull().default('0.000'),
+  total: text('total').notNull(),
+  projectId: varchar('project_id', { length: 64 }),
+  costCenterId: varchar('cost_center_id', { length: 64 }).references(() => costCenters.id, { onDelete: 'set null' }),
+});
+
+/**
+ * 58. Goods Receipts Table
+ */
+export const goodsReceipts = pgTable('goods_receipts', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  receiptNumber: varchar('receipt_number', { length: 64 }).notNull(),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  purchaseOrderId: integer('purchase_order_id').references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+  receiptDate: varchar('receipt_date', { length: 10 }).notNull(),
+  warehouse: text('warehouse'),
+  site: text('site'),
+  project: text('project'),
+  supplierDeliveryNote: text('supplier_delivery_note'),
+  receivedBy: text('received_by'),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, CONFIRMED, CANCELLED, DELETED
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 59. Goods Receipt Lines Table
+ */
+export const goodsReceiptLines = pgTable('goods_receipt_lines', {
+  id: serial('id').primaryKey(),
+  goodsReceiptId: integer('goods_receipt_id').notNull().references(() => goodsReceipts.id, { onDelete: 'cascade' }),
+  purchaseOrderLineId: integer('purchase_order_line_id').references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
+  description: text('description').notNull(),
+  orderedQuantity: text('ordered_quantity').notNull(),
+  previouslyReceivedQuantity: text('previously_received_quantity').notNull().default('0.000'),
+  thisReceiptQuantity: text('this_receipt_quantity').notNull(),
+  acceptedQuantity: text('accepted_quantity').notNull(),
+  rejectedQuantity: text('rejected_quantity').notNull().default('0.000'),
+});
+
+/**
+ * 60. Purchase Returns Table
+ */
+export const purchaseReturns = pgTable('purchase_returns', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  returnNumber: varchar('return_number', { length: 64 }).notNull(),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  purchaseOrderId: integer('purchase_order_id').references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+  goodsReceiptId: integer('goods_receipt_id').references(() => goodsReceipts.id, { onDelete: 'restrict' }),
+  returnDate: varchar('return_date', { length: 10 }).notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, CONFIRMED, CANCELLED, DELETED
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 61. Purchase Return Lines Table
+ */
+export const purchaseReturnLines = pgTable('purchase_return_lines', {
+  id: serial('id').primaryKey(),
+  purchaseReturnId: integer('purchase_return_id').notNull().references(() => purchaseReturns.id, { onDelete: 'cascade' }),
+  purchaseOrderLineId: integer('purchase_order_line_id').references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
+  description: text('description').notNull(),
+  returnedQuantity: text('returned_quantity').notNull(),
+});
+
+/**
+ * 62. Supplier Bills Table
+ */
+export const supplierBills = pgTable('supplier_bills', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  billNumber: varchar('bill_number', { length: 64 }).notNull(),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  supplierInvoiceNumber: varchar('supplier_invoice_number', { length: 64 }).notNull(),
+  purchaseOrderId: integer('purchase_order_id').references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+  goodsReceiptId: integer('goods_receipt_id').references(() => goodsReceipts.id, { onDelete: 'restrict' }),
+  billDate: varchar('bill_date', { length: 10 }).notNull(),
+  dueDate: varchar('due_date', { length: 10 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentTermsId: varchar('payment_terms_id', { length: 64 }).default('30 Days'),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, POSTED, PAID, PARTIALLY_PAID, VOIDED, DELETED
+  subtotal: text('subtotal').notNull(),
+  discountTotal: text('discount_total').notNull().default('0.000'),
+  taxTotal: text('tax_total').notNull().default('0.000'),
+  roundingAdjustment: text('rounding_adjustment').notNull().default('0.000'),
+  grandTotal: text('grand_total').notNull(),
+  paidAmount: text('paid_amount').notNull().default('0.000'),
+  outstandingAmount: text('outstanding_amount').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  postedAt: timestamp('posted_at', { withTimezone: true }),
+  postedBy: text('posted_by'),
+  voidedAt: timestamp('voided_at', { withTimezone: true }),
+  voidedBy: text('voided_by'),
+  voidReason: text('void_reason'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 63. Supplier Bill Lines Table
+ */
+export const supplierBillLines = pgTable('supplier_bill_lines', {
+  id: serial('id').primaryKey(),
+  supplierBillId: integer('supplier_bill_id').notNull().references(() => supplierBills.id, { onDelete: 'cascade' }),
+  purchaseOrderLineId: integer('purchase_order_line_id').references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
+  description: text('description').notNull(),
+  quantity: text('quantity').notNull(),
+  unitPrice: text('unit_price').notNull(),
+  discount: text('discount').notNull().default('0.000'),
+  tax: text('tax').notNull().default('0.000'),
+  total: text('total').notNull(),
+  projectId: varchar('project_id', { length: 64 }),
+  costCenterId: varchar('cost_center_id', { length: 64 }).references(() => costCenters.id, { onDelete: 'set null' }),
+});
+
+/**
+ * 64. Supplier Credits Table
+ */
+export const supplierCredits = pgTable('supplier_credits', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  creditNumber: varchar('credit_number', { length: 64 }).notNull(),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  purchaseReturnId: integer('purchase_return_id').references(() => purchaseReturns.id, { onDelete: 'set null' }),
+  supplierBillId: integer('supplier_bill_id').references(() => supplierBills.id, { onDelete: 'set null' }),
+  creditDate: varchar('credit_date', { length: 10 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, POSTED, VOIDED, DELETED
+  amount: text('amount').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 65. Supplier Payments Table
+ */
+export const supplierPayments = pgTable('supplier_payments', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).notNull().references(() => branches.id, { onDelete: 'restrict' }),
+  paymentNumber: varchar('payment_number', { length: 64 }).notNull(),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  paymentDate: varchar('payment_date', { length: 10 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  paymentMethodId: varchar('payment_method_id', { length: 64 }).notNull().default('CASH'), // CASH, BANK_TRANSFER, CHECK, OTHER
+  bankAccountId: varchar('bank_account_id', { length: 64 }),
+  referenceNumber: text('reference_number'),
+  amount: text('amount').notNull(),
+  allocatedAmount: text('allocated_amount').notNull().default('0.000'),
+  unallocatedAmount: text('unallocated_amount').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, POSTED, VOIDED, DELETED
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  postedAt: timestamp('posted_at', { withTimezone: true }),
+  postedBy: text('posted_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 66. Supplier Payment Allocations Table
+ */
+export const supplierPaymentAllocations = pgTable('supplier_payment_allocations', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  paymentId: integer('payment_id').references(() => supplierPayments.id, { onDelete: 'cascade' }),
+  supplierBillId: integer('supplier_bill_id').references(() => supplierBills.id, { onDelete: 'cascade' }),
+  supplierCreditId: integer('supplier_credit_id').references(() => supplierCredits.id, { onDelete: 'cascade' }),
+  allocatedAmount: text('allocated_amount').notNull(),
+  allocationDate: varchar('allocation_date', { length: 10 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 67. Billing Profiles Table (Operating Company or external Principal Company billing identity)
+ */
+export const billingProfiles = pgTable('billing_profiles', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  profileCode: varchar('profile_code', { length: 64 }).notNull(),
+  profileName: varchar('profile_name', { length: 255 }).notNull(),
+  isOperatingCompany: boolean('is_operating_company').notNull().default(false),
+  principalSupplierId: integer('principal_supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
+  principalClientId: integer('principal_client_id').references(() => clients.id, { onDelete: 'set null' }),
+  legalNameEn: text('legal_name_en').notNull(),
+  legalNameAr: text('legal_name_ar').notNull(),
+  tradeNameEn: text('trade_name_en'),
+  tradeNameAr: text('trade_name_ar'),
+  crNumber: varchar('cr_number', { length: 64 }),
+  licenseNumber: varchar('license_number', { length: 64 }),
+  vatNumber: varchar('vat_number', { length: 64 }),
+  phone: varchar('phone', { length: 32 }),
+  email: varchar('email', { length: 255 }),
+  addressEn: text('address_en'),
+  addressAr: text('address_ar'),
+  bankName: varchar('bank_name', { length: 255 }),
+  iban: varchar('iban', { length: 64 }),
+  swiftCode: varchar('swift_code', { length: 32 }),
+  signatoryName: varchar('signatory_name', { length: 255 }),
+  signatoryTitle: varchar('signatory_title', { length: 255 }),
+  logoUrl: text('logo_url'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // ACTIVE, INACTIVE, SUSPENDED, DELETED
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(),
+  effectiveTo: varchar('effective_to', { length: 10 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+});
+
+/**
+ * 68. Billing Authorizations Table (Controlled external Principal authorization)
+ */
+export const billingAuthorizations = pgTable('billing_authorizations', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  billingProfileId: integer('billing_profile_id').notNull().references(() => billingProfiles.id, { onDelete: 'cascade' }),
+  authorizationReference: varchar('authorization_reference', { length: 128 }).notNull(),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(),
+  effectiveTo: varchar('effective_to', { length: 10 }).notNull(),
+  documentReference: text('document_reference'),
+  status: varchar('status', { length: 32 }).notNull().default('APPROVED'), // PENDING, APPROVED, REJECTED, EXPIRED, REVOKED
+  approvedBy: text('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 69. Projects Table
+ */
+export const projects = pgTable('projects', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  branchId: varchar('branch_id', { length: 64 }).references(() => branches.id, { onDelete: 'restrict' }),
+  projectCode: varchar('project_code', { length: 64 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  projectType: varchar('project_type', { length: 64 }).notNull().default('General Contract'), // General Contract, Subcontract, Construction, Cleaning, Maintenance, Labour Supply, Service
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
+  principalSupplierId: integer('principal_supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
+  billingProfileId: integer('billing_profile_id').notNull().references(() => billingProfiles.id, { onDelete: 'restrict' }),
+  contractReference: varchar('contract_reference', { length: 128 }),
+  principalReference: varchar('principal_reference', { length: 128 }),
+  primarySiteId: integer('primary_site_id').references(() => clientSites.id, { onDelete: 'set null' }),
+  currency: varchar('currency', { length: 3 }).notNull().default('KWD'),
+  contractValue: text('contract_value').notNull().default('0.000'),
+  billingMethod: varchar('billing_method', { length: 64 }).notNull().default('FIXED_CONTRACT'), // FIXED_CONTRACT, MILESTONE, MONTHLY_SERVICE, TIMESHEET_BASED, QUANTITY_BASED, MANUAL
+  startDate: varchar('start_date', { length: 10 }).notNull(),
+  plannedEndDate: varchar('planned_end_date', { length: 10 }),
+  actualEndDate: varchar('actual_end_date', { length: 10 }),
+  projectManagerEmployeeId: varchar('project_manager_employee_id', { length: 64 }).references(() => employees.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // DRAFT, PLANNED, ACTIVE, ON_HOLD, COMPLETED, CANCELLED, CLOSED, DELETED
+  description: text('description'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 70. Project Contracts Table
+ */
+export const projectContracts = pgTable('project_contracts', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  contractNumber: varchar('contract_number', { length: 64 }).notNull(),
+  contractType: varchar('contract_type', { length: 64 }).notNull(), // Direct Contract, Subcontract, Service Contract, Labour Supply Contract
+  clientId: integer('client_id').references(() => clients.id, { onDelete: 'restrict' }),
+  principalSupplierId: integer('principal_supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
+  contractDate: varchar('contract_date', { length: 10 }).notNull(),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(),
+  effectiveTo: varchar('effective_to', { length: 10 }),
+  contractValue: text('contract_value').notNull(),
+  currency: varchar('currency', { length: 3 }).notNull().default('KWD'),
+  billingMethod: varchar('billing_method', { length: 64 }).notNull().default('FIXED_CONTRACT'),
+  paymentTerms: text('payment_terms'),
+  retentionPercentage: text('retention_percentage').default('0.00'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  version: integer('version').notNull().default(1),
+  documentAttachmentId: text('document_attachment_id'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 71. Project Sites Table
+ */
+export const projectSites = pgTable('project_sites', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  clientSiteId: integer('client_site_id').notNull().references(() => clientSites.id, { onDelete: 'restrict' }),
+  siteCode: varchar('site_code', { length: 64 }),
+  startDate: varchar('start_date', { length: 10 }),
+  endDate: varchar('end_date', { length: 10 }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  siteSupervisorEmployeeId: varchar('site_supervisor_employee_id', { length: 64 }).references(() => employees.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * 72. Project Activities / Cost Activity Master
+ */
+export const projectActivities = pgTable('project_activities', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 64 }).notNull(),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 73. Project Budgets Table
+ */
+export const projectBudgets = pgTable('project_budgets', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  budgetCategory: varchar('budget_category', { length: 64 }).notNull(), // Internal Labour, External Labour, Materials, Subcontractor, Equipment, Overhead
+  allocatedAmount: text('allocated_amount').notNull(),
+  currency: varchar('currency', { length: 3 }).notNull().default('KWD'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+/**
+ * 74. External Workers Table (Workforce Source 2: External Manpower / Subcontract Labour)
+ */
+export const externalWorkers = pgTable('external_workers', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  workerCode: varchar('worker_code', { length: 64 }).notNull(),
+  sourceSupplierId: integer('source_supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  nameEn: text('name_en').notNull(),
+  nameAr: text('name_ar'),
+  nationalityId: integer('nationality_id').references(() => nationalities.id, { onDelete: 'set null' }),
+  profession: varchar('profession', { length: 128 }).notNull(),
+  phone: varchar('phone', { length: 32 }),
+  identityDocumentType: varchar('identity_document_type', { length: 64 }), // Civil ID, Passport, Iqama
+  identityDocumentNumber: varchar('identity_document_number', { length: 64 }),
+  defaultRate: text('default_rate').default('0.000'),
+  rateType: varchar('rate_type', { length: 32 }).notNull().default('HOURLY'), // HOURLY, DAILY, SHIFT, MONTHLY, FIXED
+  currency: varchar('currency', { length: 3 }).notNull().default('KWD'),
+  availableFrom: varchar('available_from', { length: 10 }),
+  availableTo: varchar('available_to', { length: 10 }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // ACTIVE, INACTIVE, BLOCKED, DELETED
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 75. Workforce Supplier Agreements & Rate Cards
+ */
+export const workforceSupplierAgreements = pgTable('workforce_supplier_agreements', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  agreementNumber: varchar('agreement_number', { length: 64 }).notNull(),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(),
+  effectiveTo: varchar('effective_to', { length: 10 }),
+  currency: varchar('currency', { length: 3 }).notNull().default('KWD'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+});
+
+export const workforceRateCards = pgTable('workforce_rate_cards', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  agreementId: integer('agreement_id').notNull().references(() => workforceSupplierAgreements.id, { onDelete: 'cascade' }),
+  profession: varchar('profession', { length: 128 }).notNull(),
+  rateType: varchar('rate_type', { length: 32 }).notNull().default('HOURLY'),
+  standardRate: text('standard_rate').notNull(),
+  overtimeRate: text('overtime_rate').default('0.000'),
+  effectiveFrom: varchar('effective_from', { length: 10 }).notNull(),
+  effectiveTo: varchar('effective_to', { length: 10 }),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+});
+
+/**
+ * 76. Workforce Deployments Table (Unified Operational Deployment for Internal & External)
+ */
+export const workforceDeployments = pgTable('workforce_deployments', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  projectSiteId: integer('project_site_id').references(() => projectSites.id, { onDelete: 'set null' }),
+  workforceType: varchar('workforce_type', { length: 32 }).notNull(), // INTERNAL_EMPLOYEE, EXTERNAL_WORKER
+  employeeId: varchar('employee_id', { length: 64 }).references(() => employees.id, { onDelete: 'set null' }),
+  externalWorkerId: integer('external_worker_id').references(() => externalWorkers.id, { onDelete: 'set null' }),
+  position: varchar('position', { length: 128 }),
+  shiftId: varchar('shift_id', { length: 64 }).references(() => shifts.id, { onDelete: 'set null' }),
+  startDate: varchar('start_date', { length: 10 }).notNull(),
+  endDate: varchar('end_date', { length: 10 }),
+  deploymentType: varchar('deployment_type', { length: 64 }).notNull().default('REGULAR'), // REGULAR, TEMPORARY, PART_TIME, RELIEF, EMERGENCY, MOBILIZATION, SUBCONTRACT
+  rateOverride: text('rate_override'),
+  rateType: varchar('rate_type', { length: 32 }).default('HOURLY'),
+  currency: varchar('currency', { length: 3 }).default('KWD'),
+  status: varchar('status', { length: 32 }).notNull().default('ACTIVE'), // PLANNED, ACTIVE, TRANSFERRED, COMPLETED, CANCELLED, DELETED
+  assignedBy: text('assigned_by'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: text('deleted_by'),
+  deleteReason: text('delete_reason'),
+});
+
+/**
+ * 77. External Labour Settlements Table (Approved External Time -> Supplier Bill)
+ */
+export const externalLabourSettlements = pgTable('external_labour_settlements', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  settlementNumber: varchar('settlement_number', { length: 64 }).notNull(),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+  periodStart: varchar('period_start', { length: 10 }).notNull(),
+  periodEnd: varchar('period_end', { length: 10 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull().default('KWD'),
+  totalApprovedHours: text('total_approved_hours').notNull(),
+  totalAmount: text('total_amount').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('DRAFT'), // DRAFT, APPROVED, BILLED, CANCELLED
+  supplierBillId: integer('supplier_bill_id').references(() => supplierBills.id, { onDelete: 'set null' }),
+  approvedBy: text('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: text('created_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedBy: text('updated_by'),
+});
+
+export const externalLabourSettlementLines = pgTable('external_labour_settlement_lines', {
+  id: serial('id').primaryKey(),
+  tenantId: varchar('tenant_id', { length: 64 }).notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  settlementId: integer('settlement_id').notNull().references(() => externalLabourSettlements.id, { onDelete: 'cascade' }),
+  externalWorkerId: integer('external_worker_id').notNull().references(() => externalWorkers.id, { onDelete: 'restrict' }),
+  approvedHours: text('approved_hours').notNull(),
+  rate: text('rate').notNull(),
+  lineTotal: text('line_total').notNull(),
+  timesheetReference: text('timesheet_reference'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+

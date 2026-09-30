@@ -1,42 +1,50 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { peopleRepository } from '../src/infrastructure/database/repositories/people.repository.ts';
 import { companyRepository } from '../src/infrastructure/database/repositories/company.repository.ts';
 import { pdfGeneratorService } from '../src/services/pdf-generator.service.ts';
-import { MigrationRunner } from '../src/infrastructure/database/migrations/migration-runner.ts';
 import { Money } from '../src/core/domain/money.ts';
+import { db } from '../src/db/index.ts';
+import { employees, branches, tenants, userTenants, users, documentSequences } from '../src/db/schema.ts';
+import { eq } from 'drizzle-orm';
 
 describe('GulfHive People Module — Authoritative Employee Master Suite', () => {
-  let companyId = 'tenant_corp_01_1790702844962';
+  let companyId = '';
   let branchId = '';
 
   beforeAll(async () => {
-    try {
-      const migrationRunner = new MigrationRunner();
-      await migrationRunner.runAllMigrations();
-    } catch {
-      // Migrations may be pre-applied or managed by cloudsql-setup / Drizzle
-    }
+    // Create dedicated isolated test tenant
+    const testCode = `TPE${Date.now().toString().slice(-4)}`;
+    const created = await companyRepository.createCompanyWithMainBranchAndAdmin({
+      code: testCode,
+      legalNameEn: 'GulfHive Isolated Test Company',
+      legalNameAr: 'شركة جلف هايف للاختبار المعزول',
+      countryCode: 'KW',
+      baseCurrency: 'KWD',
+      fiscalYearStartMonth: 1,
+      timezone: 'Asia/Kuwait',
+      branchCode: 'HQ',
+      branchNameEn: 'Head Office',
+      branchNameAr: 'المكتب الرئيسي',
+      adminUid: `admin_test_${Date.now()}`,
+      adminEmail: `admin_test_${Date.now()}@gulfhive.test`,
+    });
+    companyId = created.tenant.id;
+    branchId = created.branch.id;
+  });
 
-    let company = await companyRepository.getCompanyById(companyId);
-    if (!company) {
-      const created = await companyRepository.createCompanyWithMainBranchAndAdmin({
-        code: `CP${Date.now().toString().slice(-4)}`,
-        legalNameEn: 'GulfHive Test Company',
-        legalNameAr: 'شركة جلف هايف للاختبار',
-        countryCode: 'KW',
-        baseCurrency: 'KWD',
-        fiscalYearStartMonth: 1,
-        timezone: 'Asia/Kuwait',
-        branchCode: 'HQ',
-        branchNameEn: 'Head Office',
-        branchNameAr: 'المكتب الرئيسي',
-        adminUid: `admin_${Date.now()}`,
-        adminEmail: 'admin@gulfhive.test',
-      });
-      companyId = created.tenant.id;
-      branchId = created.branch.id;
-    } else {
-      branchId = company.branches[0]?.id || 'br_main_01';
+  afterAll(async () => {
+    if (companyId) {
+      try {
+        // Clean up test data completely
+        await db.delete(employees).where(eq(employees.tenantId, companyId));
+        await db.delete(userTenants).where(eq(userTenants.tenantId, companyId));
+        await db.delete(users).where(eq(users.tenantId, companyId));
+        await db.delete(documentSequences).where(eq(documentSequences.tenantId, companyId));
+        await db.delete(branches).where(eq(branches.tenantId, companyId));
+        await db.delete(tenants).where(eq(tenants.id, companyId));
+      } catch (err) {
+        // Ignore cleanup errors on test shutdown
+      }
     }
   });
 

@@ -20,6 +20,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Button, Input, Select, FormField, useToast } from '../design-system/index.ts';
+import { apiClient } from '../lib/api-client.ts';
 
 interface FirstRunWizardProps {
   onCompanyCreated: (tenant: any) => void;
@@ -158,15 +159,10 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
     setErrorMessage(null);
 
     try {
-      const response = await fetch('/api/setup/company', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
+      const data = await apiClient.post<any>('/api/setup/company', formData);
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to establish company');
+      if (!data?.tenant) {
+        throw new Error('Establishment completed but tenant metadata was not returned by server.');
       }
 
       addToast({
@@ -177,18 +173,18 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
 
       onCompanyCreated(data.tenant);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to establish company. Please verify details.');
+      setErrorMessage(err.message || 'Failed to establish company. Please verify details and retry.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const steps = [
-    { num: 1, title: t('wizard.step1.title'), icon: Building2 },
-    { num: 2, title: t('wizard.step2.title'), icon: MapPin },
-    { num: 3, title: t('wizard.step3.title'), icon: Calendar },
-    { num: 4, title: t('wizard.step4.title'), icon: UserCheck },
-    { num: 5, title: t('wizard.step5.title'), icon: ShieldCheck },
+    { num: 1, title: language === 'ar' ? 'المنشأة' : 'Company', icon: Building2 },
+    { num: 2, title: language === 'ar' ? 'الفروع' : 'Location', icon: MapPin },
+    { num: 3, title: language === 'ar' ? 'المالية' : 'Finance', icon: Calendar },
+    { num: 4, title: language === 'ar' ? 'المسؤول' : 'Admin', icon: UserCheck },
+    { num: 5, title: language === 'ar' ? 'المراجعة' : 'Review', icon: ShieldCheck },
   ];
 
   const PrevIcon = direction === 'rtl' ? ArrowRight : ArrowLeft;
@@ -208,8 +204,8 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
           </div>
         </div>
 
-        {/* Wizard Stepper Bar */}
-        <div className="mt-6 grid grid-cols-5 gap-1.5 text-xs">
+        {/* Wizard Stepper Bar - Responsively balanced & natural wrapping without truncation */}
+        <div className="mt-6 grid grid-cols-5 gap-2 text-xs">
           {steps.map((s) => {
             const Icon = s.icon;
             const isCompleted = currentStep > s.num;
@@ -217,18 +213,20 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
             return (
               <div
                 key={s.num}
-                className={`flex flex-col items-center p-2 rounded text-center transition-colors ${
+                className={`flex flex-col items-center justify-center p-2 rounded text-center transition-colors ${
                   isCurrent
                     ? 'bg-slate-800 text-amber-400 font-semibold'
                     : isCompleted
-                    ? 'text-emerald-400'
-                    : 'text-slate-500'
+                    ? 'text-emerald-400 font-medium'
+                    : 'text-slate-400'
                 }`}
               >
-                <div className="flex items-center justify-center w-6 h-6 rounded-full mb-1 bg-slate-800 text-xs">
-                  {isCompleted ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Icon className="w-3.5 h-3.5" />}
+                <div className="flex items-center justify-center w-7 h-7 rounded-full mb-1.5 bg-slate-800 text-xs shrink-0 shadow-2xs">
+                  {isCompleted ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Icon className="w-3.5 h-3.5" />}
                 </div>
-                <span className="hidden md:inline text-[11px] truncate max-w-[120px]">{s.title}</span>
+                <span className="text-[11px] leading-tight text-center whitespace-normal break-words max-w-full">
+                  {s.title}
+                </span>
               </div>
             );
           })}
@@ -642,9 +640,12 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                 size="sm"
                 onClick={handleSubmit}
                 isLoading={isSubmitting}
+                disabled={isSubmitting}
                 leftIcon={<ShieldCheck className="w-4 h-4" />}
               >
-                {t('action.complete_setup')}
+                {isSubmitting
+                  ? (language === 'ar' ? 'جاري تأسيس المنشأة...' : 'Establishing Enterprise...')
+                  : t('action.complete_setup')}
               </Button>
             )}
           </div>

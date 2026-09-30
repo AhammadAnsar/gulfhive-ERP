@@ -26,7 +26,14 @@ import {
   documentTypes,
   auditLogs,
   attendanceRecords,
+  attendanceExceptions,
   payrollItems,
+  payrollAdjustments,
+  timesheets,
+  leaveRequests,
+  overtimeRecords,
+  employeeLoans,
+  employeeLeaveEntitlements,
   rosterAssignments,
   finalSettlements,
 } from '../../../db/schema.ts';
@@ -765,7 +772,7 @@ export class PeopleRepository {
       // 12. Audit Trail
       await tx.insert(auditLogs).values({
         tenantId,
-        actorId: input.actorId,
+        actorId: input.actorId || 'SYSTEM',
         actorEmail: input.actorEmail || null,
         action: 'CREATE',
         entityType: 'EMPLOYEE',
@@ -916,7 +923,7 @@ export class PeopleRepository {
       // Audit Log
       await tx.insert(auditLogs).values({
         tenantId,
-        actorId: input.actorId,
+        actorId: input.actorId || 'SYSTEM',
         actorEmail: input.actorEmail || null,
         action: 'UPDATE',
         entityType: 'EMPLOYEE',
@@ -972,6 +979,269 @@ export class PeopleRepository {
   }
 
   /**
+   * Evaluates all historical business dependencies for an employee.
+   * Returns whether employee is eligible for permanent hard delete.
+   */
+  public async checkEmployeeDependencies(tenantId: string, employeeId: string): Promise<{ isEligible: boolean; reasons: string[] }> {
+    const reasons: string[] = [];
+
+    const [att] = await db.select({ count: sql<number>`count(*)` }).from(attendanceRecords).where(eq(attendanceRecords.employeeId, employeeId));
+    if (Number(att?.count || 0) > 0) reasons.push(`Has ${att.count} attendance record(s)`);
+
+    const [attExc] = await db.select({ count: sql<number>`count(*)` }).from(attendanceExceptions).where(eq(attendanceExceptions.employeeId, employeeId));
+    if (Number(attExc?.count || 0) > 0) reasons.push(`Has ${attExc.count} attendance exception(s)`);
+
+    const [ts] = await db.select({ count: sql<number>`count(*)` }).from(timesheets).where(eq(timesheets.employeeId, employeeId));
+    if (Number(ts?.count || 0) > 0) reasons.push(`Has ${ts.count} timesheet record(s)`);
+
+    const [lv] = await db.select({ count: sql<number>`count(*)` }).from(leaveRequests).where(eq(leaveRequests.employeeId, employeeId));
+    if (Number(lv?.count || 0) > 0) reasons.push(`Has ${lv.count} leave request(s)`);
+
+    const [ot] = await db.select({ count: sql<number>`count(*)` }).from(overtimeRecords).where(eq(overtimeRecords.employeeId, employeeId));
+    if (Number(ot?.count || 0) > 0) reasons.push(`Has ${ot.count} overtime record(s)`);
+
+    const [pr] = await db.select({ count: sql<number>`count(*)` }).from(payrollItems).where(eq(payrollItems.employeeId, employeeId));
+    if (Number(pr?.count || 0) > 0) reasons.push(`Referenced in ${pr.count} payroll run(s)`);
+
+    const [adj] = await db.select({ count: sql<number>`count(*)` }).from(payrollAdjustments).where(eq(payrollAdjustments.employeeId, employeeId));
+    if (Number(adj?.count || 0) > 0) reasons.push(`Has ${adj.count} payroll adjustment(s)`);
+
+    const [loans] = await db.select({ count: sql<number>`count(*)` }).from(employeeLoans).where(eq(employeeLoans.employeeId, employeeId));
+    if (Number(loans?.count || 0) > 0) reasons.push(`Has ${loans.count} loan record(s)`);
+
+    const [settlements] = await db.select({ count: sql<number>`count(*)` }).from(finalSettlements).where(eq(finalSettlements.employeeId, employeeId));
+    if (Number(settlements?.count || 0) > 0) reasons.push(`Has ${settlements.count} end-of-service settlement(s)`);
+
+    const [rosters] = await db.select({ count: sql<number>`count(*)` }).from(rosterAssignments).where(eq(rosterAssignments.employeeId, employeeId));
+    if (Number(rosters?.count || 0) > 0) reasons.push(`Has ${rosters.count} roster assignment(s)`);
+
+    const [contracts] = await db.select({ count: sql<number>`count(*)` }).from(employeeContracts).where(eq(employeeContracts.employeeId, employeeId));
+    if (Number(contracts?.count || 0) > 1) reasons.push(`Has ${contracts.count} contract records (renewals present)`);
+
+    return {
+      isEligible: reasons.length === 0,
+      reasons,
+    };
+  }
+
+  /**
+   * Preflight bulk delete inspection: Categorizes target employees into eligible vs protected.
+   */
+  public async preflightBulkDelete(
+    tenantId: string,
+    params: {
+      employeeIds?: string[];
+      allFiltered?: boolean;
+      filterCriteria?: any;
+    }
+  ) {
+    let targetIds = params.employeeIds || [];
+
+    if (params.allFiltered) {
+      const filtered = await this.listEmployees(tenantId, params.filterCriteria);
+      targetIds = filtered.map(e => e.id);
+    }
+
+    if (targetIds.length === 0) {
+      return {
+        totalCount: 0,
+        eligibleCount: 0,
+        protectedCount: 0,
+        items: [] as Array<{
+          id: string;
+          employeeNumber: string;
+          nameEn: string;
+          nameAr: string;
+          isEligibleForDelete: boolean;
+          reasons: string[];
+          employmentStatus: string;
+        }>,
+      };
+    }
+
+    // Secure cross-company verification: Query employees belonging to THIS tenantId only
+    const targetEmployees = await db.select({
+      id: employees.id,
+      employeeNumber: employees.employeeNumber,
+      firstNameEn: employees.firstNameEn,
+      lastNameEn: employees.lastNameEn,
+      firstNameAr: employees.firstNameAr,
+      lastNameAr: employees.lastNameAr,
+      departmentId: employees.departmentId,
+      branchId: employees.branchId,
+      employmentStatus: employees.employmentStatus,
+    }).from(employees)
+      .where(and(eq(employees.tenantId, tenantId), inArray(employees.id, targetIds)));
+
+    const items = [];
+    for (const emp of targetEmployees) {
+      const depCheck = await this.checkEmployeeDependencies(tenantId, emp.id);
+      items.push({
+        id: emp.id,
+        employeeNumber: emp.employeeNumber,
+        nameEn: `${emp.firstNameEn} ${emp.lastNameEn}`,
+        nameAr: `${emp.firstNameAr} ${emp.lastNameAr}`,
+        isEligibleForDelete: depCheck.isEligible,
+        reasons: depCheck.reasons,
+        employmentStatus: emp.employmentStatus,
+      });
+    }
+
+    const eligibleCount = items.filter(i => i.isEligibleForDelete).length;
+    const protectedCount = items.filter(i => !i.isEligibleForDelete).length;
+
+    return {
+      totalCount: items.length,
+      eligibleCount,
+      protectedCount,
+      items,
+    };
+  }
+
+  /**
+   * Centralized bulk employee operations: Permanent hard-delete (for eligible) or Archive.
+   */
+  public async bulkDeleteEmployees(
+    tenantId: string,
+    params: {
+      employeeIds?: string[];
+      allFiltered?: boolean;
+      filterCriteria?: any;
+      action: 'DELETE' | 'ARCHIVE';
+      actorId: string;
+      actorEmail?: string;
+    }
+  ) {
+    const preflight = await this.preflightBulkDelete(tenantId, params);
+
+    const result = {
+      requested: preflight.totalCount,
+      deleted: 0,
+      protected: 0,
+      archived: 0,
+      failed: 0,
+      details: [] as Array<{
+        id: string;
+        employeeNumber: string;
+        status: 'DELETED' | 'PROTECTED' | 'ARCHIVED' | 'FAILED';
+        message?: string;
+      }>,
+    };
+
+    if (params.action === 'DELETE') {
+      for (const item of preflight.items) {
+        if (!item.isEligibleForDelete) {
+          result.protected++;
+          result.details.push({
+            id: item.id,
+            employeeNumber: item.employeeNumber,
+            status: 'PROTECTED',
+            message: `Protected from deletion: ${item.reasons.join('; ')}`,
+          });
+          continue;
+        }
+
+        try {
+          await db.transaction(async (tx) => {
+            await tx.delete(employeeEmergencyContacts).where(eq(employeeEmergencyContacts.employeeId, item.id));
+            await tx.delete(employeeDependents).where(eq(employeeDependents.employeeId, item.id));
+            await tx.delete(employeeBankDetails).where(eq(employeeBankDetails.employeeId, item.id));
+            await tx.delete(employeeDocuments).where(eq(employeeDocuments.employeeId, item.id));
+            await tx.delete(employeeHistory).where(eq(employeeHistory.employeeId, item.id));
+            await tx.delete(employeeAssignments).where(eq(employeeAssignments.employeeId, item.id));
+            await tx.delete(employeeLeaveEntitlements).where(eq(employeeLeaveEntitlements.employeeId, item.id));
+            await tx.delete(employeeSalaries).where(eq(employeeSalaries.employeeId, item.id));
+            await tx.delete(employeeContracts).where(eq(employeeContracts.employeeId, item.id));
+            await tx.delete(employees).where(and(eq(employees.id, item.id), eq(employees.tenantId, tenantId)));
+          });
+
+          result.deleted++;
+          result.details.push({
+            id: item.id,
+            employeeNumber: item.employeeNumber,
+            status: 'DELETED',
+            message: 'Permanently deleted unreferenced record',
+          });
+        } catch (err: any) {
+          result.failed++;
+          result.details.push({
+            id: item.id,
+            employeeNumber: item.employeeNumber,
+            status: 'FAILED',
+            message: err.message || 'Deletion failed',
+          });
+        }
+      }
+
+      // Compact batch audit log
+      if (result.deleted > 0 || result.protected > 0) {
+        await db.insert(auditLogs).values({
+          tenantId,
+          actorId: params.actorId,
+          actorEmail: params.actorEmail || null,
+          action: 'BULK_DELETE',
+          entityType: 'EMPLOYEE',
+          entityId: `batch_${Date.now()}`,
+          previousState: null,
+          resultingState: {
+            requested: result.requested,
+            deleted: result.deleted,
+            protected: result.protected,
+            failed: result.failed,
+          },
+        });
+        logger.audit('BULK_DELETE', 'EMPLOYEE', `batch_${Date.now()}`, {
+          requested: result.requested,
+          deleted: result.deleted,
+          protected: result.protected,
+        }, { tenantId });
+      }
+    } else if (params.action === 'ARCHIVE') {
+      for (const item of preflight.items) {
+        try {
+          await this.archiveEmployee(tenantId, item.id, params.actorId, params.actorEmail);
+          result.archived++;
+          result.details.push({
+            id: item.id,
+            employeeNumber: item.employeeNumber,
+            status: 'ARCHIVED',
+            message: 'Archived successfully',
+          });
+        } catch (err: any) {
+          result.failed++;
+          result.details.push({
+            id: item.id,
+            employeeNumber: item.employeeNumber,
+            status: 'FAILED',
+            message: err.message || 'Archival failed',
+          });
+        }
+      }
+
+      await db.insert(auditLogs).values({
+        tenantId,
+        actorId: params.actorId,
+        actorEmail: params.actorEmail || null,
+        action: 'BULK_ARCHIVE',
+        entityType: 'EMPLOYEE',
+        entityId: `batch_${Date.now()}`,
+        previousState: null,
+        resultingState: {
+          requested: result.requested,
+          archived: result.archived,
+          failed: result.failed,
+        },
+      });
+      logger.audit('BULK_ARCHIVE', 'EMPLOYEE', `batch_${Date.now()}`, {
+        requested: result.requested,
+        archived: result.archived,
+      }, { tenantId });
+    }
+
+    return result;
+  }
+
+  /**
    * Safe Employee Deletion Guard Policy
    * Blocks destructive deletion if employee has dependent business records in attendance, timesheets, payroll, settlements, or multiple contracts.
    */
@@ -985,21 +1255,24 @@ export class PeopleRepository {
     }
 
     // Check Dependent Business History References
-    const [attCount] = await db.select({ count: sql<number>`count(*)` }).from(attendanceRecords).where(eq(attendanceRecords.employeeId, employeeId));
-    const [payrollCount] = await db.select({ count: sql<number>`count(*)` }).from(payrollItems).where(eq(payrollItems.employeeId, employeeId));
-    const [rosterCount] = await db.select({ count: sql<number>`count(*)` }).from(rosterAssignments).where(eq(rosterAssignments.employeeId, employeeId));
-    const [settlementCount] = await db.select({ count: sql<number>`count(*)` }).from(finalSettlements).where(eq(finalSettlements.employeeId, employeeId));
-    const [contractCount] = await db.select({ count: sql<number>`count(*)` }).from(employeeContracts).where(eq(employeeContracts.employeeId, employeeId));
-
-    const totalBusinessReferences = Number(attCount?.count || 0) + Number(payrollCount?.count || 0) + Number(rosterCount?.count || 0) + Number(settlementCount?.count || 0);
-
-    if (totalBusinessReferences > 0 || Number(contractCount?.count || 0) > 1) {
-      throw new Error('DESTRUCTIVE_DELETE_DENIED: Employee has active business history (attendance, timesheets, payroll, or contracts). Destructive deletion is prohibited to protect historical integrity. Please set employment status to Inactive, Terminated, or Archived instead.');
+    const depCheck = await this.checkEmployeeDependencies(tenantId, employeeId);
+    if (!depCheck.isEligible) {
+      throw new Error(`DESTRUCTIVE_DELETE_DENIED: Employee has active business history (${depCheck.reasons.join(', ')}). Destructive deletion is prohibited to protect historical integrity. Please set employment status to Inactive, Terminated, or Archived instead.`);
     }
 
-    // If completely unreferenced draft employee, perform safe delete
-    await db.delete(employees)
-      .where(and(eq(employees.id, employeeId), eq(employees.tenantId, tenantId)));
+    // Completely unreferenced draft employee: clean up draft shells and perform safe delete
+    await db.transaction(async (tx) => {
+      await tx.delete(employeeEmergencyContacts).where(eq(employeeEmergencyContacts.employeeId, employeeId));
+      await tx.delete(employeeDependents).where(eq(employeeDependents.employeeId, employeeId));
+      await tx.delete(employeeBankDetails).where(eq(employeeBankDetails.employeeId, employeeId));
+      await tx.delete(employeeDocuments).where(eq(employeeDocuments.employeeId, employeeId));
+      await tx.delete(employeeHistory).where(eq(employeeHistory.employeeId, employeeId));
+      await tx.delete(employeeAssignments).where(eq(employeeAssignments.employeeId, employeeId));
+      await tx.delete(employeeLeaveEntitlements).where(eq(employeeLeaveEntitlements.employeeId, employeeId));
+      await tx.delete(employeeSalaries).where(eq(employeeSalaries.employeeId, employeeId));
+      await tx.delete(employeeContracts).where(eq(employeeContracts.employeeId, employeeId));
+      await tx.delete(employees).where(and(eq(employees.id, employeeId), eq(employees.tenantId, tenantId)));
+    });
 
     logger.audit('DELETE', 'EMPLOYEE', employeeId, { employeeNumber: emp.employeeNumber, name: `${emp.firstNameEn} ${emp.lastNameEn}` }, { tenantId });
 

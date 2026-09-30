@@ -377,7 +377,7 @@ export function EmployeeDetailDrawer({
               </div>
 
               <div className="space-y-2.5">
-                {employee.documents?.length === 0 ? (
+                {!employee.documents || employee.documents.length === 0 ? (
                   <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-lg border border-slate-100">
                     No documents attached yet.
                   </div>
