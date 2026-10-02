@@ -633,10 +633,26 @@ export class AuthRepository {
       await this.verifyNotLastAdmin(userId);
     }
 
-    // Check if role escalation attempt
+    // Check if role escalation or admin removal attempt
     if (roleIds) {
-      const isRemovingAdmin = existing.assignedRoles.some((r) => r.roleCode === 'COMPANY_ADMIN') && !roleIds.includes('role_company_admin');
-      if (isRemovingAdmin) {
+      const adminRoleRecords = await db
+        .select()
+        .from(roles)
+        .where(sql`${roles.code} IN ('COMPANY_ADMIN', 'SUPER_ADMIN')`);
+      const adminRoleIds = new Set(
+        adminRoleRecords.map((r) => r.id).concat(['role_company_admin', 'role_super_admin'])
+      );
+
+      const hasExistingAdminRole =
+        existing.role === 'COMPANY_ADMIN' ||
+        existing.role === 'SUPER_ADMIN' ||
+        existing.assignedRoles.some(
+          (r) => r.roleCode === 'COMPANY_ADMIN' || r.roleCode === 'SUPER_ADMIN' || adminRoleIds.has(r.roleId)
+        );
+
+      const hasNewAdminRole = roleIds.some((rId) => adminRoleIds.has(rId));
+
+      if (hasExistingAdminRole && !hasNewAdminRole) {
         await this.verifyNotLastAdmin(userId);
       }
     }
@@ -750,14 +766,23 @@ export class AuthRepository {
   }
 
   private async verifyNotLastAdmin(userId: number) {
-    const adminRoles = await db
+    const adminUserRoles = await db
       .select({ userId: userRoles.userId })
       .from(userRoles)
       .innerJoin(roles, eq(userRoles.roleId, roles.id))
       .innerJoin(users, eq(userRoles.userId, users.id))
-      .where(and(eq(roles.code, 'COMPANY_ADMIN'), eq(users.status, 'ACTIVE')));
+      .where(and(sql`${roles.code} IN ('COMPANY_ADMIN', 'SUPER_ADMIN')`, eq(users.status, 'ACTIVE')));
 
-    const activeAdminIds = Array.from(new Set(adminRoles.map((a) => a.userId)));
+    const directAdminUsers = await db
+      .select({ userId: users.id })
+      .from(users)
+      .where(and(sql`${users.role} IN ('COMPANY_ADMIN', 'SUPER_ADMIN')`, eq(users.status, 'ACTIVE')));
+
+    const activeAdminIds = Array.from(new Set([
+      ...adminUserRoles.map((a) => a.userId),
+      ...directAdminUsers.map((a) => a.userId),
+    ]));
+
     if (activeAdminIds.length <= 1 && activeAdminIds.includes(userId)) {
       throw new Error('Self-Lockout Protection: Cannot disable or remove Administrator role from the last remaining active Administrator.');
     }

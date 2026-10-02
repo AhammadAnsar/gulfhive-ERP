@@ -879,6 +879,8 @@ export class PeopleRepository {
       if (input.managerEmployeeId !== undefined) updateData.managerEmployeeId = input.managerEmployeeId || null;
 
       if (input.gender) updateData.gender = input.gender;
+      if (input.dateOfBirth !== undefined) updateData.dateOfBirth = input.dateOfBirth ? new Date(input.dateOfBirth) : null;
+      if (input.joiningDate !== undefined && input.joiningDate) updateData.joiningDate = new Date(input.joiningDate);
       if (input.maritalStatus) updateData.maritalStatus = input.maritalStatus;
       if (input.nationality) updateData.nationality = input.nationality.trim();
       if (input.civilIdNumber !== undefined) updateData.civilIdNumber = input.civilIdNumber?.trim() || null;
@@ -901,6 +903,78 @@ export class PeopleRepository {
         .set(updateData)
         .where(and(eq(employees.id, employeeId), eq(employees.tenantId, tenantId)))
         .returning();
+
+      // Salary Update / Upsert
+      if (input.basicSalary !== undefined && input.basicSalary !== '') {
+        const [existingSal] = await tx.select().from(employeeSalaries)
+          .where(and(eq(employeeSalaries.employeeId, employeeId), eq(employeeSalaries.isActive, true)))
+          .limit(1);
+
+        if (existingSal) {
+          await tx.update(employeeSalaries)
+            .set({
+              currency: (input.currency || existingSal.currency || 'KWD').toUpperCase(),
+              basicSalary: input.basicSalary,
+              housingAllowance: input.housingAllowance !== undefined ? input.housingAllowance : existingSal.housingAllowance,
+              transportAllowance: input.transportAllowance !== undefined ? input.transportAllowance : existingSal.transportAllowance,
+              foodAllowance: input.foodAllowance !== undefined ? input.foodAllowance : existingSal.foodAllowance,
+              otherAllowances: input.otherAllowances !== undefined ? input.otherAllowances : existingSal.otherAllowances,
+            })
+            .where(eq(employeeSalaries.id, existingSal.id));
+        } else {
+          await tx.insert(employeeSalaries).values({
+            id: `sal_${employeeId}_${Date.now()}`,
+            tenantId,
+            employeeId,
+            currency: (input.currency || 'KWD').toUpperCase(),
+            basicSalary: input.basicSalary,
+            housingAllowance: input.housingAllowance || '0.000',
+            transportAllowance: input.transportAllowance || '0.000',
+            foodAllowance: input.foodAllowance || '0.000',
+            otherAllowances: input.otherAllowances || '0.000',
+            effectiveDate: existing.joiningDate || new Date(),
+            isActive: true,
+            status: 'ACTIVE',
+            createdBy: input.actorEmail || input.actorId,
+          });
+        }
+      }
+
+      // Bank Details Update / Upsert
+      if (input.iban && input.accountNumber) {
+        const [existingBank] = await tx.select().from(employeeBankDetails)
+          .where(and(eq(employeeBankDetails.employeeId, employeeId), eq(employeeBankDetails.isPrimary, true)))
+          .limit(1);
+
+        if (existingBank) {
+          await tx.update(employeeBankDetails)
+            .set({
+              bankName: input.bankName?.trim() || existingBank.bankName,
+              bankCode: input.bankCode !== undefined ? input.bankCode : existingBank.bankCode,
+              iban: input.iban.toUpperCase().replace(/\s/g, ''),
+              accountNumber: input.accountNumber.trim(),
+              swiftBic: input.swiftBic?.toUpperCase() || existingBank.swiftBic,
+              currency: (input.currency || existingBank.currency || 'KWD').toUpperCase(),
+            })
+            .where(eq(employeeBankDetails.id, existingBank.id));
+        } else {
+          await tx.insert(employeeBankDetails).values({
+            id: `bnk_${employeeId}_${Date.now()}`,
+            tenantId,
+            employeeId,
+            bankName: input.bankName?.trim() || 'Bank Transfer',
+            bankCode: input.bankCode || null,
+            accountName: updatedEmp.displayNameEn || existing.displayNameEn,
+            iban: input.iban.toUpperCase().replace(/\s/g, ''),
+            accountNumber: input.accountNumber.trim(),
+            swiftBic: input.swiftBic?.toUpperCase() || null,
+            currency: (input.currency || 'KWD').toUpperCase(),
+            isPrimary: true,
+            status: 'ACTIVE',
+            createdBy: input.actorEmail || input.actorId,
+          });
+        }
+      }
 
       // Handle Position Transfer / Effective Assignment History
       if (positionChanged) {

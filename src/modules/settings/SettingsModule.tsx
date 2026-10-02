@@ -127,10 +127,17 @@ export function SettingsModule({ company, branches, activeBranchId, onCompanyUpd
     setIsLoading(true);
     try {
       if (subTab === 'users') {
-        const res = await fetch(`/api/companies/${company.id}/users`);
-        if (res.ok) {
-          const data = await res.json();
+        const [resUsers, resRoles] = await Promise.all([
+          fetch(`/api/companies/${company.id}/users`),
+          fetch(`/api/companies/${company.id}/roles`),
+        ]);
+        if (resUsers.ok) {
+          const data = await resUsers.json();
           setUsersList(data.users || []);
+        }
+        if (resRoles.ok) {
+          const data = await resRoles.json();
+          setRolesList(data.roles || []);
         }
       } else if (subTab === 'roles') {
         const [resRoles, resPerms] = await Promise.all([
@@ -309,7 +316,15 @@ export function SettingsModule({ company, branches, activeBranchId, onCompanyUpd
     setShowDialog(true);
 
     if (subTab === 'users') {
-      const roleIds = item.assignedRoles?.map((r: any) => r.roleId || `role_${r.roleCode?.toLowerCase()}`) || ['role_viewer'];
+      const roleIds = (item.assignedRoles && item.assignedRoles.length > 0)
+        ? item.assignedRoles.map((r: any) => r.roleId || `role_${r.roleCode?.toLowerCase()}`)
+        : item.roleIds && item.roleIds.length > 0
+        ? item.roleIds
+        : item.roleId
+        ? [item.roleId]
+        : item.role
+        ? [`role_${item.role.toLowerCase()}`]
+        : ['role_company_admin'];
       setFormData({
         ...item,
         roleIds,

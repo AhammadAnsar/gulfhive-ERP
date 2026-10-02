@@ -37,10 +37,9 @@ export function errorHandler(
 
   // Handle database constraint or unexpected runtime errors
   const isDev = process.env.NODE_ENV !== 'production';
-  logger.error(`Unhandled API Exception on ${req.method} ${req.originalUrl}:`, {
-    error: err?.message || err,
-    stack: err?.stack,
+  logger.error(`Unhandled API Exception on ${req.method} ${req.originalUrl}:`, err, {
     correlationId,
+    stack: err?.stack,
   });
 
   const statusCode = err.status || err.statusCode || 500;
