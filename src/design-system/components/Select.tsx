@@ -1,16 +1,23 @@
 /**
  * GulfHive ERP - Select Component
- * Compact select dropdown with proper RTL and LTR support.
+ * Compact select dropdown with support for options array or children, with RTL and LTR support.
  */
 
 import React, { SelectHTMLAttributes, forwardRef } from 'react';
 
+export interface SelectOption {
+  value: string | number;
+  label: string | React.ReactNode;
+  disabled?: boolean;
+}
+
 export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   hasError?: boolean;
+  options?: SelectOption[];
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className = '', hasError = false, disabled, children, ...props }, ref) => {
+  ({ className = '', hasError = false, disabled, options, children, ...props }, ref) => {
     return (
       <select
         ref={ref}
@@ -22,7 +29,13 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
         } disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-200 ${className}`}
         {...props}
       >
-        {children}
+        {options
+          ? options.map((opt) => (
+              <option key={String(opt.value)} value={opt.value} disabled={opt.disabled}>
+                {opt.label}
+              </option>
+            ))
+          : children}
       </select>
     );
   }

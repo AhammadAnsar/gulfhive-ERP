@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '../src/db/index.ts';
-import { tenants, branches, employees, invoices, parties, partyRoles } from '../src/db/schema.ts';
+import { tenants, branches, employees, invoices, parties, partyRoles, clients } from '../src/db/schema.ts';
 import { PayrollCalculator } from '../src/modules/payroll/engine/payroll-calculator.ts';
 import { Money } from '../src/core/domain/money.ts';
 
@@ -27,6 +27,7 @@ describe('GulfHive ERP E2E Critical Enterprise Workflows', () => {
   const e2eEmployeeId = `emp_e2e_${Date.now()}`;
   
   let e2eClientIdNum: number;
+  let e2eClientRecordId: number;
   let e2eSupplierIdNum: number;
   let e2eInvoiceIdNum: number;
 
@@ -57,7 +58,7 @@ describe('GulfHive ERP E2E Critical Enterprise Workflows', () => {
       },
     ]);
 
-    // Create client using Unified Party Architecture
+    // Create client party using Unified Party Architecture
     const [insertedClientParty] = await db.insert(parties).values([
       {
         tenantId: e2eTenantId,
@@ -78,6 +79,19 @@ describe('GulfHive ERP E2E Critical Enterprise Workflows', () => {
         status: 'ACTIVE',
       },
     ]);
+
+    // Create legacy clients record for relational foreign key compatibility
+    const [insertedClient] = await db.insert(clients).values([
+      {
+        tenantId: e2eTenantId,
+        partyId: e2eClientIdNum,
+        code: `CLI-E2E-${Date.now()}`,
+        nameEn: 'E2E Global Client',
+        nameAr: 'العميل العالمي الشامل',
+        status: 'ACTIVE',
+      },
+    ]).returning();
+    e2eClientRecordId = insertedClient.id;
 
     // Create supplier using Unified Party Architecture
     const [insertedSupplierParty] = await db.insert(parties).values([
@@ -107,6 +121,9 @@ describe('GulfHive ERP E2E Critical Enterprise Workflows', () => {
       await db.delete(employees).where(eq(employees.id, e2eEmployeeId));
       if (e2eInvoiceIdNum) {
         await db.delete(invoices).where(eq(invoices.id, e2eInvoiceIdNum));
+      }
+      if (e2eClientRecordId) {
+        await db.delete(clients).where(eq(clients.id, e2eClientRecordId));
       }
       await db.delete(partyRoles).where(eq(partyRoles.tenantId, e2eTenantId));
       await db.delete(parties).where(eq(parties.tenantId, e2eTenantId));
@@ -146,6 +163,8 @@ describe('GulfHive ERP E2E Critical Enterprise Workflows', () => {
         lastNameAr: 'السعيد',
         nationality: 'Kuwaiti',
         gender: 'MALE',
+        email: 'e2e_emp@gulfhive.kw',
+        joiningDate: new Date(),
         employmentStatus: 'ACTIVE',
       },
     ]);
@@ -214,7 +233,7 @@ describe('GulfHive ERP E2E Critical Enterprise Workflows', () => {
       {
         tenantId: e2eTenantId,
         branchId: e2eBranchId,
-        clientId: e2eClientIdNum, // Client reference
+        clientId: e2eClientRecordId, // Foreign Key to clients.id
         partyId: e2eClientIdNum,
         invoiceNumber: `E2E-INV-${Date.now()}`,
         invoiceDate: dateStr,
@@ -224,6 +243,7 @@ describe('GulfHive ERP E2E Critical Enterprise Workflows', () => {
         discountTotal: '0.000',
         taxTotal: '0.000',
         grandTotal: '250.000',
+        outstandingAmount: '250.000',
         status: 'DRAFT',
       },
     ]).returning();

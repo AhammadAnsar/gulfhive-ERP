@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../src/db/index.ts';
-import { tenants, branches, employees, invoices, parties } from '../src/db/schema.ts';
+import { tenants, branches, employees, invoices, parties, clients } from '../src/db/schema.ts';
 import { Money } from '../src/core/domain/money.ts';
 
 describe('PostgreSQL Integration, Concurrency & Transactional Constraints', () => {
@@ -285,11 +285,24 @@ describe('PostgreSQL Integration, Concurrency & Transactional Constraints', () =
 
       const partyIdNum = insertedParty.id;
 
+      const [insertedClient] = await db.insert(clients).values([
+        {
+          tenantId: testTenantIdA,
+          partyId: partyIdNum,
+          code: `CLI-${Date.now()}`,
+          nameEn: 'Immutability Tester Client',
+          nameAr: 'عميل اختبار عدم التغيير',
+          status: 'ACTIVE',
+        },
+      ]).returning();
+
+      const clientIdNum = insertedClient.id;
+
       const [insertedInvoice] = await db.insert(invoices).values([
         {
           tenantId: testTenantIdA,
           branchId: branchIdA,
-          clientId: partyIdNum, // Client ID mapping (Party Unified)
+          clientId: clientIdNum, // Foreign Key points to clients.id
           partyId: partyIdNum,
           invoiceNumber: `INV-POSTED-${Date.now()}`,
           invoiceDate: new Date().toISOString().substring(0, 10),
@@ -331,8 +344,9 @@ describe('PostgreSQL Integration, Concurrency & Transactional Constraints', () =
       await expect(updateInvoice(invoiceId, { grandTotal: '900.000' })).rejects.toThrow(/POSTED_RECORD_IMMUTABLE/);
       await expect(deleteInvoice(invoiceId)).rejects.toThrow(/POSTED_RECORD_IMMUTABLE/);
 
-      // Clean up invoice and party records safely
+      // Clean up invoice, client, and party records safely
       await db.delete(invoices).where(eq(invoices.id, invoiceId));
+      await db.delete(clients).where(eq(clients.id, clientIdNum));
       await db.delete(parties).where(eq(parties.id, partyIdNum));
     });
   });

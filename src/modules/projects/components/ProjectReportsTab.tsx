@@ -38,11 +38,45 @@ export function ProjectReportsTab({
   const [selectedProjectId, setSelectedProjectId] = useState('ALL');
 
   const handleExport = (format: 'pdf' | 'excel') => {
-    addToast({
-      type: 'success',
-      title: language === 'ar' ? 'تم تجهيز التقرير' : 'Report Generated',
-      message: language === 'ar' ? `تم استخراج التقرير بصيغة ${format.toUpperCase()} بنجاح` : `Exported ${format.toUpperCase()} report successfully.`,
-    });
+    const filteredProjects = projects.filter(
+      (p) => selectedProjectId === 'ALL' || String(p.id) === selectedProjectId
+    );
+
+    if (format === 'excel') {
+      const headers = ['Project Code', 'Project Name (EN)', 'Project Name (AR)', 'Client', 'Principal', 'Billing Profile', 'Contract Value', 'Currency', 'Start Date', 'End Date', 'Status'];
+      const rows = filteredProjects.map((p) => [
+        `"${p.projectCode || ''}"`,
+        `"${(p.nameEn || '').replace(/"/g, '""')}"`,
+        `"${(p.nameAr || '').replace(/"/g, '""')}"`,
+        `"${(p.client?.nameEn || 'Direct Client').replace(/"/g, '""')}"`,
+        `"${(p.principalSupplier?.nameEn || 'N/A').replace(/"/g, '""')}"`,
+        `"${p.billingProfile?.profileCode || 'DEFAULT'}"`,
+        `"${Number(p.contractValue || 0).toFixed(3)}"`,
+        `"${p.currency || company.baseCurrency || 'KWD'}"`,
+        `"${p.startDate || ''}"`,
+        `"${p.plannedEndDate || ''}"`,
+        `"${p.status || 'ACTIVE'}"`,
+      ]);
+
+      const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+      const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `gulfhive_projects_report_${company.code || 'CORP'}_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'تم تنزيل التقرير' : 'Report Exported',
+        message: language === 'ar' ? 'تم تنزيل ملف كشف المشاريع بنجاح' : 'Projects report downloaded successfully.',
+      });
+    } else {
+      window.print();
+    }
   };
 
   return (

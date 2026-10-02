@@ -62,9 +62,15 @@ export function Sidebar({ activeModule, onSelectModule, company }: SidebarProps)
       {/* Brand Identity Header */}
       <div className="h-16 px-4 flex items-center justify-between border-b border-slate-800">
         <div className="flex items-center space-x-3 rtl:space-x-reverse min-w-0">
-          <div className="w-8 h-8 rounded bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-xs tracking-wider shrink-0 shadow-xs">
-            GH
-          </div>
+          {company?.logoUrl ? (
+            <div className="w-8 h-8 rounded bg-white p-0.5 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
+              <img src={company.logoUrl} alt="Logo" className="max-w-full max-h-full object-contain" />
+            </div>
+          ) : (
+            <div className="w-8 h-8 rounded bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-xs tracking-wider shrink-0 shadow-xs">
+              GH
+            </div>
+          )}
           {!isSidebarCollapsed && (
             <div className="truncate">
               <span className="text-sm font-bold tracking-tight text-white block">

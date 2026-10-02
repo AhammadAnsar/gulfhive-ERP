@@ -23,6 +23,12 @@ export interface AppShellProps {
   breadcrumbs?: BreadcrumbItem[];
   actions?: React.ReactNode;
   children: React.ReactNode;
+  currentUser?: {
+    displayName?: string;
+    email?: string;
+    role?: string;
+  };
+  onLogout?: () => void;
 }
 
 export function AppShell({
@@ -35,6 +41,8 @@ export function AppShell({
   breadcrumbs,
   actions,
   children,
+  currentUser,
+  onLogout,
 }: AppShellProps) {
   const { t, language } = useI18n();
   const {
@@ -65,6 +73,8 @@ export function AppShell({
             branches={branches}
             activeBranchId={activeBranchId}
             onSelectBranch={onSelectBranch}
+            currentUser={currentUser}
+            onLogout={onLogout}
           />
 
           {/* Subheader: Breadcrumbs & Action Toolbar */}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useI18n } from '../../../shared/i18n/I18nContext.tsx';
 import { Button, Input, Select, Dialog, useToast } from '../../../design-system/index.ts';
+import { apiClient } from '../../../lib/api-client.ts';
 import { ProjectEditModal } from './ProjectEditModal.tsx';
 import { ProjectPreflightDeleteModal } from './ProjectPreflightDeleteModal.tsx';
 import { ProjectBulkDeleteModal } from './ProjectBulkDeleteModal.tsx';
@@ -81,51 +82,42 @@ export function ProjectMasterTab({
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(`/api/companies/${company.id}/projects`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newProject,
-          clientId: Number(newProject.clientId),
-          principalSupplierId: newProject.principalSupplierId ? Number(newProject.principalSupplierId) : undefined,
-          billingProfileId: Number(newProject.billingProfileId),
-          branchId,
-        }),
+      await apiClient.post(`/api/companies/${company.id}/projects`, {
+        ...newProject,
+        clientId: Number(newProject.clientId),
+        principalSupplierId: newProject.principalSupplierId ? Number(newProject.principalSupplierId) : undefined,
+        billingProfileId: Number(newProject.billingProfileId),
+        branchId,
       });
 
-      if (res.ok) {
-        addToast({
-          type: 'success',
-          title: language === 'ar' ? 'تم إنشاء المشروع' : 'Project Established',
-          message: language === 'ar' ? 'تم تسجيل المشروع وهوية الفوترة بنجاح' : 'Project master record created.',
-        });
-        setShowCreateModal(false);
-        setNewProject({
-          projectCode: '',
-          nameEn: '',
-          nameAr: '',
-          projectType: 'General Contract',
-          isSubcontract: false,
-          clientId: '',
-          principalSupplierId: '',
-          billingProfileId: '',
-          contractReference: '',
-          principalReference: '',
-          currency: company.baseCurrency || 'KWD',
-          contractValue: '0.000',
-          billingMethod: 'FIXED_CONTRACT',
-          startDate: new Date().toISOString().slice(0, 10),
-          plannedEndDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-          projectManagerEmployeeId: '',
-          description: '',
-        });
-        onRefresh();
-      } else {
-        const err = await res.json();
-        addToast({ type: 'error', title: 'Error', message: err.error || 'Failed to create project' });
-      }
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'تم إنشاء المشروع' : 'Project Established',
+        message: language === 'ar' ? 'تم تسجيل المشروع وهوية الفوترة بنجاح' : 'Project master record created.',
+      });
+      setShowCreateModal(false);
+      setNewProject({
+        projectCode: '',
+        nameEn: '',
+        nameAr: '',
+        projectType: 'General Contract',
+        isSubcontract: false,
+        clientId: '',
+        principalSupplierId: '',
+        billingProfileId: '',
+        contractReference: '',
+        principalReference: '',
+        currency: company.baseCurrency || 'KWD',
+        contractValue: '0.000',
+        billingMethod: 'FIXED_CONTRACT',
+        startDate: new Date().toISOString().slice(0, 10),
+        plannedEndDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        projectManagerEmployeeId: '',
+        description: '',
+      });
+      onRefresh();
     } catch (err: any) {
-      addToast({ type: 'error', title: 'Error', message: err.message || 'Network error' });
+      addToast({ type: 'error', title: 'Error', message: err.message || 'Failed to create project' });
     }
   };
 

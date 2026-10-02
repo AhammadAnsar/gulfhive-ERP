@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../../shared/i18n/I18nContext.tsx';
 import { LoadingState, useToast } from '../../design-system/index.ts';
+import { apiClient } from '../../lib/api-client.ts';
 import { ProjectMasterTab } from './components/ProjectMasterTab.tsx';
 import { BillingProfilesTab } from './components/BillingProfilesTab.tsx';
 import { ProjectContractsTab } from './components/ProjectContractsTab.tsx';
@@ -23,7 +24,10 @@ import {
   Coins,
   ShieldCheck,
   TrendingUp,
-  Layers
+  Layers,
+  FolderKanban,
+  HardHat,
+  BadgeDollarSign
 } from 'lucide-react';
 
 interface ProjectsModuleProps {
@@ -31,6 +35,19 @@ interface ProjectsModuleProps {
   branches: any[];
   activeBranchId: string;
 }
+
+type TabType =
+  | 'projects'
+  | 'billing-profiles'
+  | 'contracts'
+  | 'sites'
+  | 'external-workers'
+  | 'deployments'
+  | 'time'
+  | 'settlements'
+  | 'reports';
+
+type DomainCategory = 'ALL' | 'CONTRACTS' | 'WORKFORCE' | 'FINANCE';
 
 export function ProjectsModule({
   company,
@@ -40,17 +57,8 @@ export function ProjectsModule({
   const { language } = useI18n();
   const { addToast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<
-    | 'projects'
-    | 'billing-profiles'
-    | 'contracts'
-    | 'sites'
-    | 'external-workers'
-    | 'deployments'
-    | 'time'
-    | 'settlements'
-    | 'reports'
-  >('projects');
+  const [activeTab, setActiveTab] = useState<TabType>('projects');
+  const [selectedCategory, setSelectedCategory] = useState<DomainCategory>('ALL');
 
   const [isLoading, setIsLoading] = useState(true);
   const [projects, setProjects] = useState<any[]>([]);
@@ -62,39 +70,24 @@ export function ProjectsModule({
   const loadModuleData = async () => {
     setIsLoading(true);
     try {
-      const [projRes, bpRes, clientRes, supRes, empRes] = await Promise.all([
-        fetch(`/api/companies/${company.id}/projects`),
-        fetch(`/api/companies/${company.id}/projects/billing-profiles`),
-        fetch(`/api/companies/${company.id}/sales/clients`),
-        fetch(`/api/companies/${company.id}/procurement/suppliers`),
-        fetch(`/api/companies/${company.id}/employees`),
+      const [projData, bpData, clientData, supData, empData] = await Promise.all([
+        apiClient.get(`/api/companies/${company.id}/projects`),
+        apiClient.get(`/api/companies/${company.id}/projects/billing-profiles`),
+        apiClient.get(`/api/companies/${company.id}/sales/clients`),
+        apiClient.get(`/api/companies/${company.id}/procurement/suppliers`),
+        apiClient.get(`/api/companies/${company.id}/employees`),
       ]);
 
-      if (projRes.ok) {
-        const data = await projRes.json();
-        setProjects(Array.isArray(data) ? data : data.projects || []);
-      }
-      if (bpRes.ok) {
-        const data = await bpRes.json();
-        setBillingProfiles(Array.isArray(data) ? data : data.billingProfiles || []);
-      }
-      if (clientRes.ok) {
-        const data = await clientRes.json();
-        setClients(Array.isArray(data) ? data : data.clients || []);
-      }
-      if (supRes.ok) {
-        const data = await supRes.json();
-        setSuppliers(Array.isArray(data) ? data : data.suppliers || []);
-      }
-      if (empRes.ok) {
-        const data = await empRes.json();
-        setEmployees(Array.isArray(data) ? data : data.employees || []);
-      }
-    } catch {
+      setProjects(Array.isArray(projData) ? projData : projData?.projects || []);
+      setBillingProfiles(Array.isArray(bpData) ? bpData : bpData?.billingProfiles || []);
+      setClients(Array.isArray(clientData) ? clientData : clientData?.clients || []);
+      setSuppliers(Array.isArray(supData) ? supData : supData?.suppliers || []);
+      setEmployees(Array.isArray(empData) ? empData : empData?.employees || []);
+    } catch (err: any) {
       addToast({
         type: 'error',
         title: language === 'ar' ? 'خطأ في التحميل' : 'Data Load Error',
-        message: language === 'ar' ? 'فشل تحميل بيانات موديول المشاريع' : 'Could not fetch projects data.',
+        message: err.message || (language === 'ar' ? 'فشل تحميل بيانات موديول المشاريع' : 'Could not fetch projects data.'),
       });
     } finally {
       setIsLoading(false);
@@ -104,6 +97,13 @@ export function ProjectsModule({
   useEffect(() => {
     loadModuleData();
   }, [company.id]);
+
+  // Listen for global refresh trigger
+  useEffect(() => {
+    const handleRefresh = () => loadModuleData();
+    window.addEventListener('gulfhive:refresh', handleRefresh);
+    return () => window.removeEventListener('gulfhive:refresh', handleRefresh);
+  }, [company?.id]);
 
   // Dynamic KPI calculations with array safety
   const safeProjects = Array.isArray(projects) ? projects : [];
@@ -116,18 +116,37 @@ export function ProjectsModule({
   const subcontractProjectsCount = safeProjects.filter((p) => p.principalSupplierId).length;
   const activeProjectsCount = safeProjects.filter((p) => p.status === 'ACTIVE').length;
 
+  const allTabs: { id: TabType; category: DomainCategory; labelEn: string; labelAr: string; icon: any }[] = [
+    // 1. Projects & Sites
+    { id: 'projects', category: 'CONTRACTS', labelEn: 'Projects Master', labelAr: 'سجل المشاريع', icon: Briefcase },
+    { id: 'contracts', category: 'CONTRACTS', labelEn: 'Contracts & Subcontracts', labelAr: 'العقود والاتفاقيات', icon: FileText },
+    { id: 'sites', category: 'CONTRACTS', labelEn: 'Project Sites', labelAr: 'مواقع العمل', icon: MapPin },
+    // 2. Workforce Operations
+    { id: 'deployments', category: 'WORKFORCE', labelEn: 'Workforce Deployment', labelAr: 'تشغيل القوى العاملة', icon: Layers },
+    { id: 'external-workers', category: 'WORKFORCE', labelEn: 'External Workforce', labelAr: 'العمالة الخارجية', icon: Users },
+    { id: 'time', category: 'WORKFORCE', labelEn: 'Project Timesheets', labelAr: 'ساعات العمل', icon: Clock },
+    // 3. Billing & Finance
+    { id: 'billing-profiles', category: 'FINANCE', labelEn: 'Billing Profiles & Auth', labelAr: 'هويات الفوترة والتفويض', icon: ShieldCheck },
+    { id: 'settlements', category: 'FINANCE', labelEn: 'Labour Settlements & AP', labelAr: 'تسويات مقاولي التوريد', icon: Receipt },
+    { id: 'reports', category: 'FINANCE', labelEn: 'Operational Reports', labelAr: 'التقارير التكليفية', icon: FileSpreadsheet },
+  ];
+
+  const visibleTabs = selectedCategory === 'ALL'
+    ? allTabs
+    : allTabs.filter((t) => t.category === selectedCategory);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 max-w-full overflow-x-hidden">
       {/* Top Banner with KPIs */}
-      <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-2xs">
+      <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded bg-slate-900 flex items-center justify-center text-amber-400 font-bold">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded bg-slate-900 flex items-center justify-center text-amber-400 font-bold shrink-0">
                 <Briefcase className="w-4 h-4" />
               </div>
               <div>
-                <h1 className="text-base font-bold text-slate-900">
+                <h1 className="text-base font-bold text-slate-900 tracking-tight">
                   {language === 'ar'
                     ? 'إدارة المشاريع، عقود الباطن، هويات الفوترة وتشغيل القوى العاملة'
                     : 'Projects, Subcontracts, Billing Identity & Workforce Deployment'}
@@ -142,31 +161,31 @@ export function ProjectsModule({
           </div>
 
           {/* Quick Metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 shrink-0">
+            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100 min-w-[110px]">
               <span className="text-[11px] text-slate-500 font-medium">
                 {language === 'ar' ? 'المشاريع النشطة' : 'Active Projects'}
               </span>
               <div className="text-sm font-bold text-slate-900 mt-0.5">{activeProjectsCount}</div>
             </div>
-            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100">
+            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100 min-w-[110px]">
               <span className="text-[11px] text-slate-500 font-medium">
                 {language === 'ar' ? 'عقود الباطن' : 'Subcontracts'}
               </span>
               <div className="text-sm font-bold text-amber-800 mt-0.5">{subcontractProjectsCount}</div>
             </div>
-            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100">
+            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100 min-w-[110px]">
               <span className="text-[11px] text-slate-500 font-medium">
                 {language === 'ar' ? 'هويات الفوترة' : 'Billing Profiles'}
               </span>
-              <div className="text-sm font-bold text-blue-900 mt-0.5">{safeBillingProfiles.length}</div>
+              <div className="text-sm font-bold text-slate-900 mt-0.5">{safeBillingProfiles.length}</div>
             </div>
-            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100">
+            <div className="p-2.5 bg-slate-50 rounded-md border border-slate-100 min-w-[130px]">
               <span className="text-[11px] text-slate-500 font-medium">
                 {language === 'ar' ? 'إجمالي قيمة العقود' : 'Portfolio Value'}
               </span>
-              <div className="text-sm font-bold text-slate-900 mt-0.5 font-mono">
-                {totalContractValue.toLocaleString('en-US', { minimumFractionDigits: 3 })}{' '}
+              <div className="text-sm font-bold text-emerald-800 mt-0.5 font-mono">
+                {totalContractValue.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}{' '}
                 <span className="text-[10px] text-slate-500 font-normal">{company.baseCurrency || 'KWD'}</span>
               </div>
             </div>
@@ -174,135 +193,111 @@ export function ProjectsModule({
         </div>
       </div>
 
-      {/* Navigation Sub-Tabs */}
-      <div className="flex items-center gap-1.5 border-b border-slate-200 pb-2 overflow-x-auto text-xs">
-        <button
-          onClick={() => setActiveTab('projects')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'projects'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Briefcase className="w-4 h-4" />
-          {language === 'ar' ? 'سجل المشاريع' : 'Projects Master'}
-        </button>
+      {/* Domain Category Filter + Tab Strip: Zero Horizontal Scrollbars */}
+      <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
+        {/* Category Filter Controls */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mr-1 rtl:ml-1">
+              {language === 'ar' ? 'القطاع:' : 'Domain:'}
+            </span>
+            <button
+              onClick={() => setSelectedCategory('ALL')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                selectedCategory === 'ALL'
+                  ? 'bg-slate-900 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {language === 'ar' ? 'الكل (9)' : 'All (9)'}
+            </button>
+            <button
+              onClick={() => {
+                setSelectedCategory('CONTRACTS');
+                if (!['projects', 'contracts', 'sites'].includes(activeTab)) setActiveTab('projects');
+              }}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                selectedCategory === 'CONTRACTS'
+                  ? 'bg-indigo-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <FolderKanban className="w-3.5 h-3.5" />
+              <span>{language === 'ar' ? 'المشاريع والمواقع (3)' : 'Projects & Sites (3)'}</span>
+            </button>
+            <button
+              onClick={() => {
+                setSelectedCategory('WORKFORCE');
+                if (!['deployments', 'external-workers', 'time'].includes(activeTab)) setActiveTab('deployments');
+              }}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                selectedCategory === 'WORKFORCE'
+                  ? 'bg-amber-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <HardHat className="w-3.5 h-3.5" />
+              <span>{language === 'ar' ? 'القوى العاملة والتشغيل (3)' : 'Workforce & Operations (3)'}</span>
+            </button>
+            <button
+              onClick={() => {
+                setSelectedCategory('FINANCE');
+                if (!['billing-profiles', 'settlements', 'reports'].includes(activeTab)) setActiveTab('billing-profiles');
+              }}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                selectedCategory === 'FINANCE'
+                  ? 'bg-emerald-700 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <BadgeDollarSign className="w-3.5 h-3.5" />
+              <span>{language === 'ar' ? 'الفوترة والتسويات (3)' : 'Billing & Commercial (3)'}</span>
+            </button>
+          </div>
 
-        <button
-          onClick={() => setActiveTab('billing-profiles')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'billing-profiles'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4 text-amber-400" />
-          {language === 'ar' ? 'هويات الفوترة والتفويض' : 'Billing Profiles & Auth'}
-        </button>
+          <div className="text-[11px] font-mono text-slate-400">
+            {language === 'ar' ? 'عرض بدون تمرير أفقي' : 'Responsive Compact Layout'}
+          </div>
+        </div>
 
-        <button
-          onClick={() => setActiveTab('contracts')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'contracts'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <FileText className="w-4 h-4" />
-          {language === 'ar' ? 'العقود والاتفاقيات' : 'Contracts & Subcontracts'}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('sites')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'sites'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <MapPin className="w-4 h-4" />
-          {language === 'ar' ? 'مواقع العمل' : 'Project Sites'}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('external-workers')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'external-workers'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Users className="w-4 h-4 text-amber-400" />
-          {language === 'ar' ? 'العمالة الخارجية' : 'External Workforce'}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('deployments')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'deployments'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          {language === 'ar' ? 'تشغيل القوى العاملة' : 'Workforce Deployment'}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('time')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'time'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Clock className="w-4 h-4" />
-          {language === 'ar' ? 'ساعات العمل' : 'Project Timesheets'}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('settlements')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'settlements'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Receipt className="w-4 h-4 text-blue-400" />
-          {language === 'ar' ? 'تسويات الموردين' : 'Labour Settlements'}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('reports')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-            activeTab === 'reports'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          {language === 'ar' ? 'التقارير' : 'Reports'}
-        </button>
+        {/* Tab Buttons: Clean Flex-Wrap, No Overflow Scrollbar */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          {visibleTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium text-xs transition cursor-pointer ${
+                  isActive
+                    ? 'bg-slate-900 text-white shadow-2xs font-semibold'
+                    : 'text-slate-600 hover:bg-slate-100 bg-slate-50/80 border border-slate-200/60'
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-400' : 'text-slate-500'}`} />
+                <span>{language === 'ar' ? tab.labelAr : tab.labelEn}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Tab Content Rendering */}
       {isLoading ? (
-        <div className="bg-white rounded-lg border border-slate-200 p-16 text-center">
-          <LoadingState label={language === 'ar' ? 'جاري تحميل بيانات المشاريع وهويات الفوترة...' : 'Loading project domain and workforce ledger...'} />
-        </div>
+        <LoadingState label={language === 'ar' ? 'جاري تحميل بيانات المشاريع والعقود...' : 'Synchronizing project portfolio & workforce data...'} />
       ) : (
         <>
           {activeTab === 'projects' && (
             <ProjectMasterTab
               company={company}
-              branchId={activeBranchId}
               projects={safeProjects}
               clients={safeClients}
               suppliers={safeSuppliers}
               billingProfiles={safeBillingProfiles}
               employees={safeEmployees}
+              branchId={activeBranchId}
               onRefresh={loadModuleData}
-              onDeployWorker={(proj) => {
+              onDeployWorker={() => {
                 setActiveTab('deployments');
               }}
             />

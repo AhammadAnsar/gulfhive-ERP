@@ -12,7 +12,8 @@ import {
   Building2,
   GitBranch,
   User,
-  Shield
+  Shield,
+  LogOut
 } from 'lucide-react';
 import { useI18n } from '../../shared/i18n/I18nContext.tsx';
 import { useLayout } from '../context/LayoutContext.tsx';
@@ -27,6 +28,7 @@ export interface TopBarProps {
     email?: string;
     role?: string;
   };
+  onLogout?: () => void;
 }
 
 export function TopBar({
@@ -35,6 +37,7 @@ export function TopBar({
   activeBranchId,
   onSelectBranch,
   currentUser = { displayName: 'Administrator', email: 'admin@gulfhive.internal', role: 'COMPANY_ADMIN' },
+  onLogout,
 }: TopBarProps) {
   const { t, language, toggleLanguage } = useI18n();
   const {
@@ -78,7 +81,13 @@ export function TopBar({
         {/* Company & Branch Context */}
         {company && branches.length > 0 && (
           <div className="hidden lg:flex items-center space-x-2 rtl:space-x-reverse text-xs bg-slate-50 border border-slate-200 rounded px-2.5 py-1">
-            <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            {company.logoUrl ? (
+              <div className="w-4 h-4 rounded bg-white overflow-hidden shrink-0 flex items-center justify-center">
+                <img src={company.logoUrl} alt="" className="max-w-full max-h-full object-contain" />
+              </div>
+            ) : (
+              <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            )}
             <span className="font-mono font-semibold text-slate-800">{company.code}</span>
             <span className="text-slate-300">/</span>
             <GitBranch className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -129,6 +138,16 @@ export function TopBar({
               {currentUser.role || 'COMPANY_ADMIN'}
             </span>
           </div>
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="p-1.5 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition cursor-pointer"
+              title={language === 'ar' ? 'تسجيل الخروج' : 'Sign Out'}
+              aria-label="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </header>

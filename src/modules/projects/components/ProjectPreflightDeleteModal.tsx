@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../../../shared/i18n/I18nContext.tsx';
 import { Button, Input, Dialog, useToast, LoadingState } from '../../../design-system/index.ts';
+import { apiClient } from '../../../lib/api-client.ts';
 import { Archive, Trash2 } from 'lucide-react';
 
 interface ProjectPreflightDeleteModalProps {
@@ -30,9 +31,8 @@ export function ProjectPreflightDeleteModal({
     if (isOpen && project) {
       setIsLoading(true);
       setReason('');
-      fetch(`/api/companies/${companyId}/projects/${project.id}/preflight`)
-        .then((res) => res.json())
-        .then((data) => setPreflightData(data.preflight || null))
+      apiClient.get(`/api/companies/${companyId}/projects/${project.id}/preflight`)
+        .then((data) => setPreflightData(data?.preflight || null))
         .catch((err) => console.error(err))
         .finally(() => setIsLoading(false));
     }
@@ -52,31 +52,23 @@ export function ProjectPreflightDeleteModal({
 
     setIsDeleting(true);
     try {
-      const res = await fetch(`/api/companies/${companyId}/projects/${project.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+      const data = await apiClient.delete(`/api/companies/${companyId}/projects/${project.id}`, {
         body: JSON.stringify({ reason }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const actionType = data.result?.action || 'DELETED';
-        addToast({
-          type: 'success',
-          title: language === 'ar' ? 'تمت العملية' : 'Success',
-          message:
-            actionType === 'SOFT_DELETE'
-              ? (language === 'ar' ? 'تم إغلاق وأرشفة المشروع بأمان للحفاظ على سجلات العمالة.' : 'Project safely closed and archived with audit preservation.')
-              : (language === 'ar' ? 'تم حذف المشروع نهائياً لعدم وجود سجلات مرتبطة.' : 'Project permanently purged.'),
-        });
-        onDeleted();
-        onClose();
-      } else {
-        const err = await res.json();
-        addToast({ type: 'error', title: 'Error', message: err.error || 'Failed to delete project' });
-      }
+      const actionType = data?.result?.action || 'DELETED';
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'تمت العملية' : 'Success',
+        message:
+          actionType === 'SOFT_DELETE'
+            ? (language === 'ar' ? 'تم إغلاق وأرشفة المشروع بأمان للحفاظ على سجلات العمالة.' : 'Project safely closed and archived with audit preservation.')
+            : (language === 'ar' ? 'تم حذف المشروع نهائياً لعدم وجود سجلات مرتبطة.' : 'Project permanently purged.'),
+      });
+      onDeleted();
+      onClose();
     } catch (err: any) {
-      addToast({ type: 'error', title: 'Error', message: err.message || 'Network error' });
+      addToast({ type: 'error', title: 'Error', message: err.message || 'Operation failed' });
     } finally {
       setIsDeleting(false);
     }

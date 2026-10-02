@@ -27,6 +27,8 @@ import {
   Briefcase
 } from 'lucide-react';
 import { Button, LoadingState, ErrorState } from '../../design-system/index.ts';
+import { AccessRestricted } from '../../shared/components/AccessRestricted.tsx';
+import { apiClient } from '../../lib/api-client.ts';
 
 export interface DashboardModuleProps {
   company: any;
@@ -47,19 +49,30 @@ export function DashboardModule({
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const [isForbidden, setIsForbidden] = useState(false);
+
   const ArrowIcon = direction === 'rtl' ? ArrowLeft : ArrowRight;
 
   const fetchDashboardData = async () => {
     if (!company?.id) return;
     setIsLoading(true);
     setErrorMsg(null);
+    setIsForbidden(false);
 
     try {
-      const res = await fetch(`/api/companies/${company.id}/dashboard?branchId=${activeBranchId || ''}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to load dashboard data');
+      const json = await apiClient.get(`/api/companies/${company.id}/dashboard`, {
+        params: { branchId: activeBranchId || undefined },
+      });
       setData(json.summary);
     } catch (err: any) {
+      if (err.status === 401 || err.code === 'UNAUTHORIZED' || (err.message && err.message.includes('Authentication required'))) {
+        // Handled centrally by AuthContext - session invalid or expired
+        return;
+      }
+      if (err.status === 403 || err.code === 'FORBIDDEN') {
+        setIsForbidden(true);
+        return;
+      }
       setErrorMsg(err.message || 'Failed to connect to GulfHive Services');
     } finally {
       setIsLoading(false);
@@ -106,6 +119,15 @@ export function DashboardModule({
           <div className="h-64 bg-slate-200/60 rounded-lg" />
         </div>
       </div>
+    );
+  }
+
+  if (isForbidden) {
+    return (
+      <AccessRestricted
+        requiredPermission="dashboard.view"
+        onGoHome={fetchDashboardData}
+      />
     );
   }
 

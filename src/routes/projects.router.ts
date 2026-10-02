@@ -361,3 +361,52 @@ projectsRouter.delete('/companies/:companyId/projects/:id', authenticateToken, r
     next(error);
   }
 });
+
+// Project Sites Endpoints
+projectsRouter.get('/companies/:companyId/projects/sites', authenticateToken, requireCompanyAccess, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
+    const sites = await projectsRepository.listProjectSites(req.params.companyId, projectId);
+    res.json({ sites });
+  } catch (error) {
+    next(error);
+  }
+});
+
+projectsRouter.post('/companies/:companyId/projects/sites', authenticateToken, requireCompanyAccess, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { projectId, siteCode, siteNameEn, siteNameAr, siteSupervisorEmployeeId, startDate, endDate, status } = req.body;
+    if (!projectId || !siteCode) {
+      throw new ValidationError('projectId and siteCode are required');
+    }
+    const site = await projectsRepository.createProjectSite(
+      req.params.companyId,
+      {
+        projectId: Number(projectId),
+        siteCode,
+        siteNameEn,
+        siteNameAr,
+        siteSupervisorEmployeeId,
+        startDate,
+        endDate,
+        status,
+      },
+      (req as any).user?.uid || 'admin'
+    );
+    res.status(201).json({ site });
+  } catch (error) {
+    next(error);
+  }
+});
+
+projectsRouter.delete('/companies/:companyId/projects/sites/:id', authenticateToken, requireCompanyAccess, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id) || id <= 0) throw new ValidationError('Invalid site ID');
+    const result = await projectsRepository.deleteProjectSite(req.params.companyId, id, (req as any).user?.uid || 'admin');
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+

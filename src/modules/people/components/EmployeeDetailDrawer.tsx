@@ -1,6 +1,6 @@
 /**
  * GulfHive ERP - Employee Detail Drawer
- * Slide-over inspecting authoritative employee record: contract, salary, WPS banking, documents, and history.
+ * Slide-over inspecting authoritative employee record: photo, documents, contract, salary, WPS banking, and history.
  */
 
 import React, { useState } from 'react';
@@ -21,15 +21,24 @@ import {
   Mail,
   Phone,
   Globe,
-  Trash2
+  Trash2,
+  Edit2,
+  Paperclip,
+  ExternalLink,
+  Download,
+  UploadCloud
 } from 'lucide-react';
 import { EmployeeIdCard } from './EmployeeIdCard.tsx';
+import { EmployeeEditModal } from './EmployeeEditModal.tsx';
 
 export interface EmployeeDetailDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   employee: any;
   company: any;
+  branches?: any[];
+  departments?: any[];
+  designations?: any[];
   onRefresh: () => void;
   onDelete?: (employee: any) => void;
 }
@@ -39,6 +48,9 @@ export function EmployeeDetailDrawer({
   onClose,
   employee,
   company,
+  branches = [],
+  departments = [],
+  designations = [],
   onRefresh,
   onDelete,
 }: EmployeeDetailDrawerProps) {
@@ -47,6 +59,7 @@ export function EmployeeDetailDrawer({
 
   const [activeTab, setActiveTab] = useState<'profile' | 'contract' | 'compensation' | 'documents' | 'history'>('profile');
   const [showIdCardModal, setShowIdCardModal] = useState<boolean>(false);
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
   const [showAddDocModal, setShowAddDocModal] = useState<boolean>(false);
 
   // Add Document Form State
@@ -57,16 +70,46 @@ export function EmployeeDetailDrawer({
     expiryDate: '',
     issuingAuthority: '',
     issuingCountry: company?.countryCode || 'KW',
+    fileName: '',
+    attachmentUrl: '',
     notes: '',
   });
   const [isSubmittingDoc, setIsSubmittingDoc] = useState(false);
+  const [isDeletingDocId, setIsDeletingDocId] = useState<string | null>(null);
 
   if (!employee) return null;
+
+  const handleDocFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        addToast({
+          type: 'error',
+          title: language === 'ar' ? 'حجم الملف كبير' : 'File Too Large',
+          message: language === 'ar' ? 'يجب ألا يتجاوز حجم الملف 5 ميجابايت' : 'Maximum document size is 5MB',
+        });
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setDocForm((prev) => ({
+          ...prev,
+          fileName: file.name,
+          attachmentUrl: reader.result as string,
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!docForm.documentNumber || !docForm.expiryDate) {
-      addToast({ type: 'error', title: 'Validation Error', message: 'Document number and expiry date are required.' });
+      addToast({
+        type: 'error',
+        title: 'Validation Error',
+        message: 'Document number and expiry date are required.',
+      });
       return;
     }
 
@@ -85,7 +128,7 @@ export function EmployeeDetailDrawer({
 
       addToast({
         type: 'success',
-        title: language === 'ar' ? 'تمت إضافة الوثيقة' : 'Document Attached',
+        title: language === 'ar' ? 'تمت إضافة الوثيقة' : 'Document Attached Successfully',
         message: `${docForm.documentType} - ${docForm.documentNumber}`,
       });
 
@@ -97,6 +140,8 @@ export function EmployeeDetailDrawer({
         expiryDate: '',
         issuingAuthority: '',
         issuingCountry: company?.countryCode || 'KW',
+        fileName: '',
+        attachmentUrl: '',
         notes: '',
       });
       onRefresh();
@@ -104,6 +149,36 @@ export function EmployeeDetailDrawer({
       addToast({ type: 'error', title: 'Error', message: err.message });
     } finally {
       setIsSubmittingDoc(false);
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string, docType: string) => {
+    if (!window.confirm(language === 'ar' ? `هل أنت متأكد من حذف هذه الوثيقة (${docType})؟` : `Are you sure you want to delete document (${docType})?`)) {
+      return;
+    }
+
+    setIsDeletingDocId(docId);
+    try {
+      const res = await fetch(`/api/companies/${company.id}/employees/${employee.id}/documents/${docId}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete document');
+      }
+
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'تم حذف الوثيقة' : 'Document Deleted',
+        message: docType,
+      });
+
+      onRefresh();
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Delete Failed', message: err.message });
+    } finally {
+      setIsDeletingDocId(null);
     }
   };
 
@@ -123,6 +198,8 @@ export function EmployeeDetailDrawer({
     return Math.ceil(diff / (1000 * 60 * 60 * 24));
   };
 
+  const hasPhoto = employee.avatarUrl || employee.photoPath;
+
   return (
     <>
       <Drawer
@@ -135,10 +212,19 @@ export function EmployeeDetailDrawer({
           <div className="w-full flex items-center justify-between">
             <div className="flex items-center space-x-2 rtl:space-x-reverse">
               <Button
+                variant="primary"
+                size="sm"
+                leftIcon={<Edit2 className="w-3.5 h-3.5" />}
+                onClick={() => setShowEditModal(true)}
+              >
+                {language === 'ar' ? 'تعديل بيانات الموظف' : 'Edit Employee'}
+              </Button>
+
+              <Button
                 variant="outline"
                 size="sm"
                 leftIcon={<Printer className="w-3.5 h-3.5" />}
-                onClick={() => window.open(`/api/companies/${company.id}/employees/${employee.id}/id-card`, '_blank')}
+                onClick={() => setShowIdCardModal(true)}
               >
                 {t('people.action.generate_id_card')}
               </Button>
@@ -149,7 +235,7 @@ export function EmployeeDetailDrawer({
                 leftIcon={<FileText className="w-3.5 h-3.5" />}
                 onClick={() => window.open(`/api/companies/${company.id}/employees/${employee.id}/profile-pdf`, '_blank')}
               >
-                {language === 'ar' ? 'تقرير ملف الموظف' : 'Export Profile PDF'}
+                {language === 'ar' ? 'تقرير الملف' : 'Profile PDF'}
               </Button>
 
               {onDelete && (
@@ -160,7 +246,7 @@ export function EmployeeDetailDrawer({
                   leftIcon={<Trash2 className="w-3.5 h-3.5 text-rose-600" />}
                   onClick={() => onDelete(employee)}
                 >
-                  {language === 'ar' ? 'حذف الموظف' : 'Delete'}
+                  {language === 'ar' ? 'حذف' : 'Delete'}
                 </Button>
               )}
             </div>
@@ -172,30 +258,49 @@ export function EmployeeDetailDrawer({
         }
       >
         <div className="space-y-6">
-          {/* Header Identity Card */}
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex items-center space-x-4 rtl:space-x-reverse">
-            <div className="w-12 h-12 rounded bg-slate-900 text-white font-bold text-base flex items-center justify-center shrink-0">
-              {employee.firstNameEn?.slice(0, 1)}
-              {employee.lastNameEn?.slice(0, 1)}
+          {/* Header Identity Card with Photo */}
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex items-center space-x-4 rtl:space-x-reverse shadow-2xs">
+            <div className="relative w-14 h-14 rounded-lg bg-slate-900 text-white font-bold text-lg flex items-center justify-center shrink-0 overflow-hidden border border-slate-300 shadow-sm">
+              {hasPhoto ? (
+                <img src={hasPhoto} alt="Employee Avatar" className="w-full h-full object-cover" />
+              ) : (
+                <>
+                  {employee.firstNameEn?.slice(0, 1)}
+                  {employee.lastNameEn?.slice(0, 1)}
+                </>
+              )}
             </div>
+
             <div className="flex-1 min-w-0">
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <h3 className="text-sm font-bold text-slate-900 truncate">
-                  {language === 'ar' ? `${employee.firstNameAr} ${employee.lastNameAr}` : `${employee.firstNameEn} ${employee.lastNameEn}`}
-                </h3>
-                <span className="font-mono text-[11px] font-bold text-slate-600">
-                  ({employee.employeeNumber})
-                </span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                  <h3 className="text-sm font-bold text-slate-900 truncate">
+                    {language === 'ar' ? `${employee.firstNameAr} ${employee.lastNameAr}` : `${employee.firstNameEn} ${employee.lastNameEn}`}
+                  </h3>
+                  <span className="font-mono text-[11px] font-bold text-slate-600">
+                    ({employee.employeeNumber})
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(true)}
+                  className="px-2 py-1 bg-white border border-slate-300 rounded text-slate-700 text-xs font-semibold hover:bg-slate-100 cursor-pointer flex items-center gap-1 shadow-2xs"
+                >
+                  <Edit2 className="w-3 h-3 text-slate-600" />
+                  <span>{language === 'ar' ? 'تعديل' : 'Edit'}</span>
+                </button>
               </div>
-              <p className="text-xs text-slate-500 font-arabic truncate">
+
+              <p className="text-xs text-slate-500 font-arabic truncate mt-0.5">
                 {language === 'ar' ? `${employee.firstNameEn} ${employee.lastNameEn}` : `${employee.firstNameAr} ${employee.lastNameAr}`}
               </p>
-              <div className="mt-1 flex items-center space-x-2 rtl:space-x-reverse text-[11px] text-slate-500 font-mono">
-                <span>{employee.designationNameEn || 'Staff'}</span>
+
+              <div className="mt-1.5 flex items-center space-x-2 rtl:space-x-reverse text-[11px] text-slate-500 font-mono">
+                <span>{employee.designationNameEn || employee.designationNameAr || 'Staff'}</span>
                 <span aria-hidden="true">·</span>
-                <span>{employee.branchNameEn || 'Head Office'}</span>
+                <span>{employee.branchNameEn || 'HQ'}</span>
                 <span aria-hidden="true">·</span>
-                <span className="font-semibold text-slate-800">{employee.employmentStatus}</span>
+                <span className="font-semibold text-emerald-700">{employee.employmentStatus}</span>
               </div>
             </div>
           </div>
@@ -203,18 +308,18 @@ export function EmployeeDetailDrawer({
           {/* Drawer Segmented Controls */}
           <div className="flex flex-wrap gap-1 border-b border-slate-200 pb-2 text-xs">
             {[
-              { id: 'profile', label: 'Personal' },
-              { id: 'contract', label: 'Contract' },
-              { id: 'compensation', label: 'Compensation & WPS' },
-              { id: 'documents', label: `Documents (${employee.documents?.length || 0})` },
-              { id: 'history', label: `History (${employee.history?.length || 0})` },
+              { id: 'profile', label: language === 'ar' ? 'البيانات الشخصية' : 'Personal' },
+              { id: 'contract', label: language === 'ar' ? 'العقد والتعيين' : 'Contract' },
+              { id: 'compensation', label: language === 'ar' ? 'الراتب وحساب WPS' : 'Compensation & WPS' },
+              { id: 'documents', label: language === 'ar' ? `الوثائق (${employee.documents?.length || 0})` : `Documents (${employee.documents?.length || 0})` },
+              { id: 'history', label: language === 'ar' ? `السجل (${employee.history?.length || 0})` : `History (${employee.history?.length || 0})` },
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
                 className={`px-3 py-1.5 rounded font-medium whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === tab.id
-                    ? 'bg-slate-900 text-white shadow-2xs'
+                    ? 'bg-slate-900 text-white shadow-2xs font-semibold'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                 }`}
               >
@@ -250,6 +355,10 @@ export function EmployeeDetailDrawer({
                 <div>
                   <span className="text-slate-400 block mb-0.5">Phone:</span>
                   <span className="text-slate-900">{employee.phone || '—'}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-slate-400 block mb-0.5">Address:</span>
+                  <span className="text-slate-900">{employee.addressEn || employee.addressAr || '—'}</span>
                 </div>
               </div>
             </div>
@@ -294,7 +403,6 @@ export function EmployeeDetailDrawer({
           {/* TAB 3: Compensation & WPS Banking */}
           {activeTab === 'compensation' && (
             <div className="space-y-4 text-xs">
-              {/* Salary Breakdown */}
               <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-3">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100 font-bold text-slate-900">
                   <span>Salary Structure</span>
@@ -322,7 +430,6 @@ export function EmployeeDetailDrawer({
                 </div>
               </div>
 
-              {/* WPS Bank Routing */}
               <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-3">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100 font-bold text-slate-900">
                   <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
@@ -365,7 +472,14 @@ export function EmployeeDetailDrawer({
           {activeTab === 'documents' && (
             <div className="space-y-4 text-xs">
               <div className="flex items-center justify-between">
-                <h4 className="font-bold text-slate-900">Identity & Statutory Documents</h4>
+                <div>
+                  <h4 className="font-bold text-slate-900">
+                    {language === 'ar' ? 'الوثائق الثبوتية والشهادات' : 'Identity & Statutory Documents'}
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    {language === 'ar' ? 'متابعة صلاحية البطاقة المدنية، جواز السفر، عقود العمل، والشهادات مع المرفقات.' : 'Track Civil ID, Passport, Work Permit, and Contract validity with attachments.'}
+                  </p>
+                </div>
                 <Button
                   variant="primary"
                   size="sm"
@@ -378,8 +492,8 @@ export function EmployeeDetailDrawer({
 
               <div className="space-y-2.5">
                 {!employee.documents || employee.documents.length === 0 ? (
-                  <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-lg border border-slate-100">
-                    No documents attached yet.
+                  <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-lg border border-slate-200">
+                    {language === 'ar' ? 'لا توجد وثائق مرفقة بعد. انقر على "إضافة وثيقة" بالأعلى.' : 'No documents attached yet. Click "Add Document" above.'}
                   </div>
                 ) : (
                   employee.documents.map((doc: any) => {
@@ -390,14 +504,16 @@ export function EmployeeDetailDrawer({
                     return (
                       <div
                         key={doc.id}
-                        className="p-3.5 bg-white border border-slate-200 rounded-lg flex items-center justify-between font-mono"
+                        className="p-3.5 bg-white border border-slate-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono shadow-2xs"
                       >
-                        <div>
+                        <div className="space-y-1">
                           <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                            <span className="font-bold text-slate-900">{doc.documentType}</span>
-                            <span className="text-slate-600 font-semibold">{doc.documentNumber}</span>
+                            <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                              {doc.documentType}
+                            </span>
+                            <span className="text-slate-800 font-semibold">{doc.documentNumber}</span>
                           </div>
-                          <div className="text-[11px] text-slate-400 mt-1 flex items-center space-x-2 rtl:space-x-reverse">
+                          <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
                             <span>Expires: {new Date(doc.expiryDate).toLocaleDateString()}</span>
                             {doc.issuingAuthority && (
                               <>
@@ -405,17 +521,57 @@ export function EmployeeDetailDrawer({
                                 <span>{doc.issuingAuthority}</span>
                               </>
                             )}
+                            {doc.fileName && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-emerald-700 flex items-center gap-1 font-sans">
+                                  <Paperclip className="w-3 h-3" />
+                                  {doc.fileName}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
 
-                        <div className="text-right rtl:text-left">
-                          {isExpired ? (
-                            <span className="font-bold text-rose-600 text-[11px]">Expired ({Math.abs(daysLeft)}d ago)</span>
-                          ) : isExpiring ? (
-                            <span className="font-bold text-amber-600 text-[11px]">Expiring ({daysLeft}d left)</span>
-                          ) : (
-                            <span className="font-semibold text-emerald-700 text-[11px]">Valid ({daysLeft}d left)</span>
+                        <div className="flex items-center space-x-3 rtl:space-x-reverse shrink-0">
+                          <div>
+                            {isExpired ? (
+                              <span className="font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded text-[10px]">
+                                Expired ({Math.abs(daysLeft)}d ago)
+                              </span>
+                            ) : isExpiring ? (
+                              <span className="font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[10px]">
+                                Expiring ({daysLeft}d left)
+                              </span>
+                            ) : (
+                              <span className="font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[10px]">
+                                Valid ({daysLeft}d left)
+                              </span>
+                            )}
+                          </div>
+
+                          {doc.attachmentUrl && (
+                            <a
+                              href={doc.attachmentUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              download={doc.fileName || `${doc.documentType}_${doc.documentNumber}`}
+                              className="p-1.5 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 transition"
+                              title="Download Attachment"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
                           )}
+
+                          <button
+                            type="button"
+                            disabled={isDeletingDocId === doc.id}
+                            onClick={() => handleDeleteDocument(doc.id, doc.documentType)}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                            title="Delete Document"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
                     );
@@ -425,7 +581,7 @@ export function EmployeeDetailDrawer({
             </div>
           )}
 
-          {/* TAB 5: Career & Revision History */}
+          {/* TAB 5: History */}
           {activeTab === 'history' && (
             <div className="space-y-3 text-xs">
               <h4 className="font-bold text-slate-900 mb-2">Audit & Employment History</h4>
@@ -451,98 +607,148 @@ export function EmployeeDetailDrawer({
         </div>
       </Drawer>
 
-      {/* ID Card Generation Dialog Modal */}
-      <Dialog
-        isOpen={showIdCardModal}
-        onClose={() => setShowIdCardModal(false)}
-        size="md"
-        title={t('people.id_card.title')}
-      >
-        <EmployeeIdCard
+      {/* MODAL: ADD DOCUMENT */}
+      {showAddDocModal && (
+        <Dialog
+          isOpen={showAddDocModal}
+          onClose={() => setShowAddDocModal(false)}
+          title={language === 'ar' ? 'إرفاق وثيقة ثبوتية جديدة' : 'Attach New Employee Document'}
+          description={language === 'ar' ? 'تسجيل وثيقة جديدة للموظف مع تتبع تاريخ الانتهاء ورفع المرفق.' : 'Record employee document with expiry monitoring and attachment file.'}
+          footer={
+            <div className="flex justify-end space-x-2 rtl:space-x-reverse">
+              <Button variant="outline" size="sm" onClick={() => setShowAddDocModal(false)}>
+                {language === 'ar' ? 'إلغاء' : 'Cancel'}
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleAddDocument} isLoading={isSubmittingDoc}>
+                {language === 'ar' ? 'حفظ الوثيقة' : 'Attach Document'}
+              </Button>
+            </div>
+          }
+        >
+          <form onSubmit={handleAddDocument} className="space-y-3 text-xs">
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={language === 'ar' ? 'نوع الوثيقة' : 'Document Type'} required>
+                <Select
+                  value={docForm.documentType}
+                  onChange={(e) => setDocForm((p) => ({ ...p, documentType: e.target.value }))}
+                  options={[
+                    { value: 'CIVIL_ID', label: language === 'ar' ? 'البطاقة المدنية (Civil ID)' : 'Civil ID / National ID' },
+                    { value: 'PASSPORT', label: language === 'ar' ? 'جواز السفر (Passport)' : 'Passport' },
+                    { value: 'RESIDENCY_VISA', label: language === 'ar' ? 'الإقامة / فيزا (Residency)' : 'Residency Visa' },
+                    { value: 'WORK_PERMIT', label: language === 'ar' ? 'إذن العمل (Work Permit)' : 'Work Permit' },
+                    { value: 'DRIVER_LICENSE', label: language === 'ar' ? 'رخصة القيادة (Driving License)' : 'Driving License' },
+                    { value: 'CONTRACT_COPY', label: language === 'ar' ? 'عقد العمل (Contract Copy)' : 'Employment Contract' },
+                    { value: 'DIPLOMA', label: language === 'ar' ? 'الشهادة العلمية (Degree)' : 'Educational Certificate' },
+                    { value: 'OTHER', label: language === 'ar' ? 'أخرى (Other)' : 'Other Document' },
+                  ]}
+                />
+              </FormField>
+
+              <FormField label={language === 'ar' ? 'رقم الوثيقة' : 'Document Number'} required>
+                <Input
+                  value={docForm.documentNumber}
+                  onChange={(e) => setDocForm((p) => ({ ...p, documentNumber: e.target.value }))}
+                  placeholder="290010101234"
+                  className="font-mono"
+                  required
+                />
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={language === 'ar' ? 'تاريخ الإصدار' : 'Issue Date'}>
+                <Input
+                  type="date"
+                  value={docForm.issueDate}
+                  onChange={(e) => setDocForm((p) => ({ ...p, issueDate: e.target.value }))}
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'تاريخ الانتهاء' : 'Expiry Date'} required>
+                <Input
+                  type="date"
+                  value={docForm.expiryDate}
+                  onChange={(e) => setDocForm((p) => ({ ...p, expiryDate: e.target.value }))}
+                  required
+                />
+              </FormField>
+            </div>
+
+            <FormField label={language === 'ar' ? 'جهة الإصدار' : 'Issuing Authority'}>
+              <Input
+                value={docForm.issuingAuthority}
+                onChange={(e) => setDocForm((p) => ({ ...p, issuingAuthority: e.target.value }))}
+                placeholder="e.g. PACI / Ministry of Interior"
+              />
+            </FormField>
+
+            {/* Document File Attachment */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+              <div className="font-bold text-slate-800">
+                {language === 'ar' ? 'الملف المرفق (PDF أو صورة)' : 'Attachment File (PDF or Image)'}
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="px-3 py-1.5 bg-white border border-slate-300 rounded text-slate-700 font-medium text-xs hover:bg-slate-100 cursor-pointer inline-flex items-center gap-1.5 shadow-2xs">
+                  <UploadCloud className="w-4 h-4 text-slate-600" />
+                  <span>{docForm.fileName ? (language === 'ar' ? 'تغيير الملف' : 'Change File') : (language === 'ar' ? 'اختيار ملف' : 'Choose File')}</span>
+                  <input type="file" accept=".pdf,image/*" onChange={handleDocFileChange} className="hidden" />
+                </label>
+                {docForm.fileName && (
+                  <span className="font-mono text-emerald-700 text-xs flex items-center gap-1">
+                    <Paperclip className="w-3.5 h-3.5" />
+                    {docForm.fileName}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <FormField label={language === 'ar' ? 'ملاحظات' : 'Notes'}>
+              <Input
+                value={docForm.notes}
+                onChange={(e) => setDocForm((p) => ({ ...p, notes: e.target.value }))}
+                placeholder="Optional notes"
+              />
+            </FormField>
+          </form>
+        </Dialog>
+      )}
+
+      {/* MODAL: EDIT EMPLOYEE */}
+      {showEditModal && (
+        <EmployeeEditModal
+          isOpen={showEditModal}
+          onClose={() => setShowEditModal(false)}
           employee={employee}
           company={company}
-          onClose={() => setShowIdCardModal(false)}
+          branches={branches}
+          departments={departments}
+          designations={designations}
+          onEmployeeUpdated={() => {
+            onRefresh();
+          }}
         />
-      </Dialog>
+      )}
 
-      {/* Add Document Modal */}
-      <Dialog
-        isOpen={showAddDocModal}
-        onClose={() => setShowAddDocModal(false)}
-        size="md"
-        title={t('people.action.add_document')}
-        footer={
-          <>
-            <Button variant="secondary" size="sm" onClick={() => setShowAddDocModal(false)}>
-              {t('action.cancel')}
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleAddDocument}
-              isLoading={isSubmittingDoc}
-            >
-              {t('action.save')}
-            </Button>
-          </>
-        }
-      >
-        <form onSubmit={handleAddDocument} className="space-y-3.5 text-xs">
-          <FormField label={t('people.field.document_type')} required>
-            <Select
-              value={docForm.documentType}
-              onChange={(e) => setDocForm({ ...docForm, documentType: e.target.value })}
-            >
-              <option value="CIVIL_ID">Civil ID / Iqama / National ID</option>
-              <option value="PASSPORT">Passport</option>
-              <option value="RESIDENCY_VISA">Residency Visa</option>
-              <option value="WORK_PERMIT">Work Permit</option>
-              <option value="DRIVER_LICENSE">Driver License</option>
-              <option value="CONTRACT_COPY">Contract Copy</option>
-              <option value="OTHER">Other Credential</option>
-            </Select>
-          </FormField>
-
-          <FormField label={t('people.field.document_number')} required>
-            <Input
-              type="text"
-              value={docForm.documentNumber}
-              onChange={(e) => setDocForm({ ...docForm, documentNumber: e.target.value })}
-              placeholder="e.g. 293010101234"
-              className="font-mono"
-              required
-            />
-          </FormField>
-
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Issue Date">
-              <Input
-                type="date"
-                value={docForm.issueDate}
-                onChange={(e) => setDocForm({ ...docForm, issueDate: e.target.value })}
-              />
-            </FormField>
-
-            <FormField label={t('people.field.expiry_date')} required>
-              <Input
-                type="date"
-                value={docForm.expiryDate}
-                onChange={(e) => setDocForm({ ...docForm, expiryDate: e.target.value })}
-                required
-              />
-            </FormField>
-          </div>
-
-          <FormField label={t('people.field.issuing_authority')}>
-            <Input
-              type="text"
-              value={docForm.issuingAuthority}
-              onChange={(e) => setDocForm({ ...docForm, issuingAuthority: e.target.value })}
-              placeholder="e.g. PACI, Ministry of Interior"
-            />
-          </FormField>
-        </form>
-      </Dialog>
+      {/* MODAL: ID CARD */}
+      {showIdCardModal && (
+        <Dialog
+          isOpen={showIdCardModal}
+          onClose={() => setShowIdCardModal(false)}
+          title={t('people.action.generate_id_card')}
+          size="md"
+          footer={
+            <div className="flex justify-end space-x-2 rtl:space-x-reverse">
+              <Button variant="secondary" size="sm" onClick={() => setShowIdCardModal(false)}>
+                {t('action.cancel')}
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => window.print()}>
+                {t('action.print')}
+              </Button>
+            </div>
+          }
+        >
+          <EmployeeIdCard employee={employee} company={company} />
+        </Dialog>
+      )}
     </>
   );
 }

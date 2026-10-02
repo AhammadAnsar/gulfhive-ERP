@@ -1,53 +1,42 @@
 /**
- * GulfHive ERP - New Employee Enrolment Dialog
- * Comprehensive authoritative employee registration: personal master, photo, documents, contract, salary, and WPS banking.
+ * GulfHive ERP - Employee Edit Modal
+ * Full enterprise update form: personal information, photo, assignments, contract, compensation, and banking.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, Button, FormField, Input, Select, useToast } from '../../../design-system/index.ts';
 import { useI18n } from '../../../shared/i18n/I18nContext.tsx';
-import { User, Briefcase, CreditCard, ShieldCheck, Camera, Trash2, FileText, Plus, UploadCloud, Paperclip } from 'lucide-react';
+import { User, Briefcase, CreditCard, Camera, Trash2, ShieldCheck, Image as ImageIcon } from 'lucide-react';
 
-export interface NewEmployeeDialogProps {
+export interface EmployeeEditModalProps {
   isOpen: boolean;
   onClose: () => void;
+  employee: any;
   company: any;
   branches: any[];
   departments: any[];
   designations: any[];
-  onEmployeeCreated: () => void;
+  onEmployeeUpdated: () => void;
 }
 
-interface InitialDocument {
-  id: string;
-  documentType: string;
-  documentNumber: string;
-  issueDate: string;
-  expiryDate: string;
-  issuingAuthority: string;
-  fileName?: string;
-  attachmentUrl?: string;
-}
-
-export function NewEmployeeDialog({
+export function EmployeeEditModal({
   isOpen,
   onClose,
+  employee,
   company,
   branches,
   departments,
   designations,
-  onEmployeeCreated,
-}: NewEmployeeDialogProps) {
-  const { t, language } = useI18n();
+  onEmployeeUpdated,
+}: EmployeeEditModalProps) {
+  const { language } = useI18n();
   const { addToast } = useToast();
 
-  const [activeSection, setActiveSection] = useState<'personal' | 'placement' | 'compensation' | 'documents'>('personal');
+  const [activeSection, setActiveSection] = useState<'personal' | 'placement' | 'compensation'>('personal');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Form State
+  // Form State initialized from current employee record
   const [form, setForm] = useState({
-    // Personal & Photo
-    employeeNumber: '',
     firstNameEn: '',
     middleNameEn: '',
     lastNameEn: '',
@@ -56,12 +45,10 @@ export function NewEmployeeDialog({
     lastNameAr: '',
     gender: 'MALE',
     dateOfBirth: '',
-    nationality: 'Kuwaiti',
     maritalStatus: 'SINGLE',
+    nationality: 'Kuwaiti',
     civilIdNumber: '',
-    civilIdExpiry: '',
     passportNumber: '',
-    passportExpiry: '',
     phone: '',
     workPhone: '',
     personalPhone: '',
@@ -74,23 +61,21 @@ export function NewEmployeeDialog({
     photoPath: '',
 
     // Placement & Contract
-    branchId: branches[0]?.id || '',
+    branchId: '',
     departmentId: '',
     designationId: '',
-    joiningDate: new Date().toISOString().slice(0, 10),
+    joiningDate: '',
     employmentStatus: 'ACTIVE',
     contractType: 'UNLIMITED',
-    probationDays: 90,
-    noticeDays: 90,
     workLocation: '',
 
     // Compensation & Bank
-    currency: company?.baseCurrency || 'KWD',
-    basicSalary: '450.000',
-    housingAllowance: '100.000',
-    transportAllowance: '50.000',
-    foodAllowance: '0.000',
-    otherAllowances: '0.000',
+    currency: 'KWD',
+    basicSalary: '',
+    housingAllowance: '',
+    transportAllowance: '',
+    foodAllowance: '',
+    otherAllowances: '',
     bankName: '',
     bankCode: '',
     iban: '',
@@ -98,19 +83,58 @@ export function NewEmployeeDialog({
     swiftBic: '',
   });
 
-  // Initial Documents List
-  const [initialDocs, setInitialDocs] = useState<InitialDocument[]>([
-    {
-      id: 'doc_init_1',
-      documentType: 'CIVIL_ID',
-      documentNumber: '',
-      issueDate: '',
-      expiryDate: '',
-      issuingAuthority: 'PACI - Public Authority for Civil Information',
-      fileName: '',
-      attachmentUrl: '',
-    },
-  ]);
+  useEffect(() => {
+    if (employee) {
+      const activeSalary = employee.salaries?.[0];
+      const bankDetails = employee.bankDetails;
+
+      setForm({
+        firstNameEn: employee.firstNameEn || '',
+        middleNameEn: employee.middleNameEn || '',
+        lastNameEn: employee.lastNameEn || '',
+        firstNameAr: employee.firstNameAr || '',
+        middleNameAr: employee.middleNameAr || '',
+        lastNameAr: employee.lastNameAr || '',
+        gender: employee.gender || 'MALE',
+        dateOfBirth: employee.dateOfBirth ? new Date(employee.dateOfBirth).toISOString().slice(0, 10) : '',
+        maritalStatus: employee.maritalStatus || 'SINGLE',
+        nationality: employee.nationality || 'Kuwaiti',
+        civilIdNumber: employee.civilIdNumber || '',
+        passportNumber: employee.passportNumber || '',
+        phone: employee.phone || '',
+        workPhone: employee.workPhone || '',
+        personalPhone: employee.personalPhone || '',
+        email: employee.email || '',
+        workEmail: employee.workEmail || '',
+        personalEmail: employee.personalEmail || '',
+        addressEn: employee.addressEn || '',
+        addressAr: employee.addressAr || '',
+        avatarUrl: employee.avatarUrl || employee.photoPath || '',
+        photoPath: employee.photoPath || '',
+
+        branchId: employee.branchId || branches[0]?.id || '',
+        departmentId: employee.departmentId || '',
+        designationId: employee.designationId || '',
+        joiningDate: employee.joiningDate ? new Date(employee.joiningDate).toISOString().slice(0, 10) : '',
+        employmentStatus: employee.employmentStatus || 'ACTIVE',
+        contractType: employee.contractType || 'UNLIMITED',
+        workLocation: employee.workLocation || '',
+
+        currency: activeSalary?.currency || company?.baseCurrency || 'KWD',
+        basicSalary: activeSalary?.basicSalary || '0.000',
+        housingAllowance: activeSalary?.housingAllowance || '0.000',
+        transportAllowance: activeSalary?.transportAllowance || '0.000',
+        foodAllowance: activeSalary?.foodAllowance || '0.000',
+        otherAllowances: activeSalary?.otherAllowances || '0.000',
+
+        bankName: bankDetails?.bankName || '',
+        bankCode: bankDetails?.bankCode || '',
+        iban: bankDetails?.iban || '',
+        accountNumber: bankDetails?.accountNumber || '',
+        swiftBic: bankDetails?.swiftBic || '',
+      });
+    }
+  }, [employee, company, branches]);
 
   const updateField = (field: string, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -122,8 +146,8 @@ export function NewEmployeeDialog({
       if (file.size > 2 * 1024 * 1024) {
         addToast({
           type: 'error',
-          title: language === 'ar' ? 'حجم الملف كبير' : 'File Too Large',
-          message: language === 'ar' ? 'يجب ألا يتجاوز حجم الصورة 2 ميجابايت' : 'Maximum photo size is 2MB',
+          title: language === 'ar' ? 'حجم الصورة كبير' : 'File Too Large',
+          message: language === 'ar' ? 'يجب أن لا يتجاوز حجم الصورة 2 ميجابايت' : 'Maximum photo size is 2MB',
         });
         return;
       }
@@ -142,146 +166,81 @@ export function NewEmployeeDialog({
     updateField('photoPath', '');
   };
 
-  const addDocRow = () => {
-    setInitialDocs((prev) => [
-      ...prev,
-      {
-        id: `doc_init_${Date.now()}`,
-        documentType: 'PASSPORT',
-        documentNumber: '',
-        issueDate: '',
-        expiryDate: '',
-        issuingAuthority: '',
-        fileName: '',
-        attachmentUrl: '',
-      },
-    ]);
-  };
-
-  const removeDocRow = (id: string) => {
-    setInitialDocs((prev) => prev.filter((d) => d.id !== id));
-  };
-
-  const updateDocRow = (id: string, field: keyof InitialDocument, value: any) => {
-    setInitialDocs((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, [field]: value } : d))
-    );
-  };
-
-  const handleDocFileUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        addToast({
-          type: 'error',
-          title: language === 'ar' ? 'حجم الملف كبير' : 'File Too Large',
-          message: language === 'ar' ? 'يجب ألا يتجاوز حجم الوثيقة 5 ميجابايت' : 'Maximum document size is 5MB',
-        });
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        updateDocRow(id, 'fileName', file.name);
-        updateDocRow(id, 'attachmentUrl', base64);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.firstNameEn || !form.lastNameEn || !form.firstNameAr || !form.lastNameAr || !form.email || !form.branchId || !form.basicSalary) {
+    if (!form.firstNameEn || !form.lastNameEn || !form.firstNameAr || !form.lastNameAr || !form.email || !form.branchId) {
       addToast({
         type: 'error',
         title: 'Validation Error',
-        message: 'Please complete all required fields.',
+        message: 'Please complete all required fields (names, email, branch).',
       });
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const validDocs = initialDocs
-        .filter((d) => d.documentNumber.trim() && d.expiryDate)
-        .map((d) => ({
-          documentType: d.documentType,
-          documentNumber: d.documentNumber.trim(),
-          issueDate: d.issueDate || undefined,
-          expiryDate: d.expiryDate,
-          issuingAuthority: d.issuingAuthority || undefined,
-          issuingCountry: company?.countryCode || 'KW',
-          attachmentUrl: d.attachmentUrl || undefined,
-          fileName: d.fileName || undefined,
-        }));
-
-      const res = await fetch(`/api/companies/${company.id}/employees`, {
-        method: 'POST',
+      const res = await fetch(`/api/companies/${company.id}/employees/${employee.id}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          employeeNumber: form.employeeNumber.trim() || undefined,
-          documents: validDocs,
-        }),
+        body: JSON.stringify(form),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to create employee');
+        throw new Error(data.error || 'Failed to update employee');
       }
-
-      const createdEmp = data.employee;
 
       addToast({
         type: 'success',
-        title: language === 'ar' ? 'تم تسجيل الموظف بنجاح' : 'Employee Registered Successfully',
-        message: `${createdEmp.employeeNumber} - ${createdEmp.firstNameEn} ${createdEmp.lastNameEn}`,
+        title: language === 'ar' ? 'تم تحديث بيانات الموظف بنجاح' : 'Employee Details Updated',
+        message: `${employee.employeeNumber} - ${form.firstNameEn} ${form.lastNameEn}`,
       });
 
-      onEmployeeCreated();
+      onEmployeeUpdated();
       onClose();
     } catch (err: any) {
-      addToast({ type: 'error', title: 'Registration Failed', message: err.message });
+      addToast({ type: 'error', title: 'Update Failed', message: err.message });
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  if (!employee) return null;
 
   return (
     <Dialog
       isOpen={isOpen}
       onClose={onClose}
       size="xl"
-      title={t('people.action.new_employee')}
-      description={language === 'ar' ? 'تسجيل ملف موظف جديد شامل الصورة الشخصية، الوثائق، العقد، وهيكل الراتب.' : 'Create authoritative master record with profile photo, identity documents, contract, and WPS compensation.'}
+      title={language === 'ar' ? `تعديل بيانات الموظف (${employee.employeeNumber})` : `Edit Employee Details (${employee.employeeNumber})`}
+      description={language === 'ar' ? 'تحديث الملف التعريفي، الصورة الشخصية، التكليف الوظيفي، وهيكل الراتب.' : 'Update employee master records, profile photo, position assignment, and compensation.'}
       footer={
         <div className="w-full flex items-center justify-between">
-          <div className="flex flex-wrap gap-1.5 rtl:space-x-reverse">
-            {[
-              { id: 'personal', label: language === 'ar' ? '1. البيانات والصورة' : '1. Personal & Photo' },
-              { id: 'placement', label: language === 'ar' ? '2. التعيين والعقد' : '2. Placement' },
-              { id: 'compensation', label: language === 'ar' ? '3. الراتب والبنك' : '3. Compensation' },
-              { id: 'documents', label: language === 'ar' ? `4. الوثائق (${initialDocs.filter(d => d.documentNumber).length})` : `4. Documents (${initialDocs.filter(d => d.documentNumber).length})` },
-            ].map((s) => (
+          <div className="flex space-x-1.5 rtl:space-x-reverse">
+            {(['personal', 'placement', 'compensation'] as const).map((s) => (
               <button
-                key={s.id}
+                key={s}
                 type="button"
-                onClick={() => setActiveSection(s.id as any)}
-                className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer transition ${
-                  activeSection === s.id ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
+                onClick={() => setActiveSection(s)}
+                className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer ${
+                  activeSection === s ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
                 }`}
               >
-                {s.label}
+                {s === 'personal'
+                  ? language === 'ar' ? '1. البيانات الشخصية والصورة' : '1. Personal & Photo'
+                  : s === 'placement'
+                  ? language === 'ar' ? '2. التعيين والعقد' : '2. Placement & Contract'
+                  : language === 'ar' ? '3. الراتب والبنك' : '3. Compensation & Bank'}
               </button>
             ))}
           </div>
 
           <div className="flex space-x-2 rtl:space-x-reverse">
             <Button variant="outline" size="sm" onClick={onClose} disabled={isSubmitting}>
-              {t('action.cancel')}
+              {language === 'ar' ? 'إلغاء' : 'Cancel'}
             </Button>
             <Button variant="primary" size="sm" onClick={handleSubmit} isLoading={isSubmitting}>
-              {language === 'ar' ? 'حفظ وتثبيت الموظف' : 'Enrol Employee'}
+              {language === 'ar' ? 'حفظ التعديلات' : 'Save Changes'}
             </Button>
           </div>
         </div>
@@ -302,15 +261,15 @@ export function NewEmployeeDialog({
               </div>
               <div className="space-y-1.5 flex-1">
                 <div className="text-xs font-bold text-slate-800">
-                  {language === 'ar' ? 'صورة الموظف الشخصية' : 'Employee Photo'}
+                  {language === 'ar' ? 'الصورة الشخصية للموظف' : 'Employee Profile Photo'}
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  {language === 'ar' ? 'تُعرض الصورة في بطاقة العمل (ID Card) والمسيرات وملفات الموظف.' : 'Upload official photo for ID badge, payslips, and employee profile.'}
+                  {language === 'ar' ? 'تُستخدم في بطاقة العمل (ID Card) ومسيرات الرواتب وملف الموظف (PNG, JPG بحد أقصى 2MB).' : 'Used in official ID Card, payslips, and employee profile. (PNG, JPG up to 2MB).'}
                 </p>
                 <div className="flex items-center gap-2 pt-1">
                   <label className="px-2.5 py-1 bg-white border border-slate-300 rounded text-slate-700 font-medium text-xs hover:bg-slate-50 cursor-pointer inline-flex items-center gap-1.5 shadow-2xs">
                     <Camera className="w-3.5 h-3.5 text-slate-600" />
-                    <span>{form.avatarUrl ? (language === 'ar' ? 'تغيير الصورة' : 'Change Photo') : (language === 'ar' ? 'تحميل صورة' : 'Upload Photo')}</span>
+                    <span>{language === 'ar' ? 'تغيير الصورة' : 'Upload Photo'}</span>
                     <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
                   </label>
                   {form.avatarUrl && (
@@ -327,23 +286,13 @@ export function NewEmployeeDialog({
               </div>
             </div>
 
-            {/* Custom Employee Number */}
-            <FormField label={language === 'ar' ? 'رقم الموظف (اتركه فارغاً للتسلسل التلقائي)' : 'Employee Number (Leave blank for auto-sequence)'}>
-              <Input
-                value={form.employeeNumber}
-                onChange={(e) => updateField('employeeNumber', e.target.value)}
-                placeholder="EMP-2026-00001"
-                className="font-mono"
-              />
-            </FormField>
-
-            {/* English Names */}
+            {/* Names */}
             <div className="grid grid-cols-2 gap-3">
               <FormField label={language === 'ar' ? 'الاسم الأول (إنجليزي)' : 'First Name (English)'} required>
                 <Input
                   value={form.firstNameEn}
                   onChange={(e) => updateField('firstNameEn', e.target.value)}
-                  placeholder="Ahmad"
+                  placeholder="Tariq"
                   required
                 />
               </FormField>
@@ -351,19 +300,18 @@ export function NewEmployeeDialog({
                 <Input
                   value={form.lastNameEn}
                   onChange={(e) => updateField('lastNameEn', e.target.value)}
-                  placeholder="Al-Sabah"
+                  placeholder="Al-Mansoor"
                   required
                 />
               </FormField>
             </div>
 
-            {/* Arabic Names */}
             <div className="grid grid-cols-2 gap-3" dir="rtl">
               <FormField label="الاسم الأول (بالعربي)" required>
                 <Input
                   value={form.firstNameAr}
                   onChange={(e) => updateField('firstNameAr', e.target.value)}
-                  placeholder="أحمد"
+                  placeholder="طارق"
                   required
                 />
               </FormField>
@@ -371,13 +319,13 @@ export function NewEmployeeDialog({
                 <Input
                   value={form.lastNameAr}
                   onChange={(e) => updateField('lastNameAr', e.target.value)}
-                  placeholder="الصباح"
+                  placeholder="المنصور"
                   required
                 />
               </FormField>
             </div>
 
-            {/* Demographics */}
+            {/* Identity Details */}
             <div className="grid grid-cols-3 gap-3">
               <FormField label={language === 'ar' ? 'الجنس' : 'Gender'} required>
                 <Select
@@ -389,13 +337,6 @@ export function NewEmployeeDialog({
                   ]}
                 />
               </FormField>
-              <FormField label={language === 'ar' ? 'تاريخ الميلاد' : 'Date of Birth'}>
-                <Input
-                  type="date"
-                  value={form.dateOfBirth}
-                  onChange={(e) => updateField('dateOfBirth', e.target.value)}
-                />
-              </FormField>
               <FormField label={language === 'ar' ? 'الجنسية' : 'Nationality'} required>
                 <Input
                   value={form.nationality}
@@ -404,9 +345,20 @@ export function NewEmployeeDialog({
                   required
                 />
               </FormField>
+              <FormField label={language === 'ar' ? 'الحالة الاجتماعية' : 'Marital Status'}>
+                <Select
+                  value={form.maritalStatus}
+                  onChange={(e) => updateField('maritalStatus', e.target.value)}
+                  options={[
+                    { value: 'SINGLE', label: language === 'ar' ? 'أعزب' : 'Single' },
+                    { value: 'MARRIED', label: language === 'ar' ? 'متزوج' : 'Married' },
+                    { value: 'DIVORCED', label: language === 'ar' ? 'مطلق' : 'Divorced' },
+                    { value: 'WIDOWED', label: language === 'ar' ? 'أرمل' : 'Widowed' },
+                  ]}
+                />
+              </FormField>
             </div>
 
-            {/* Identification */}
             <div className="grid grid-cols-2 gap-3">
               <FormField label={language === 'ar' ? 'الرقم المدني / الهوية الوطنية' : 'Civil ID / National ID Number'}>
                 <Input
@@ -426,14 +378,14 @@ export function NewEmployeeDialog({
               </FormField>
             </div>
 
-            {/* Contact Details */}
+            {/* Contacts */}
             <div className="grid grid-cols-2 gap-3">
               <FormField label={language === 'ar' ? 'البريد الإلكتروني الرسمي' : 'Official Email'} required>
                 <Input
                   type="email"
                   value={form.email}
                   onChange={(e) => updateField('email', e.target.value)}
-                  placeholder="ahmad@company.com"
+                  placeholder="tariq@company.com"
                   required
                 />
               </FormField>
@@ -445,6 +397,24 @@ export function NewEmployeeDialog({
                 />
               </FormField>
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={language === 'ar' ? 'العنوان (إنجليزي)' : 'Address (English)'}>
+                <Input
+                  value={form.addressEn}
+                  onChange={(e) => updateField('addressEn', e.target.value)}
+                  placeholder="Salmiya, Block 4, Street 10"
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'العنوان (عربي)' : 'Address (Arabic)'}>
+                <Input
+                  value={form.addressAr}
+                  onChange={(e) => updateField('addressAr', e.target.value)}
+                  placeholder="السالمية، قطعة 4، شارع 10"
+                  dir="rtl"
+                />
+              </FormField>
+            </div>
           </div>
         )}
 
@@ -452,7 +422,7 @@ export function NewEmployeeDialog({
         {activeSection === 'placement' && (
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <FormField label={language === 'ar' ? 'الفرع' : 'Branch'} required>
+              <FormField label={language === 'ar' ? 'الفرع / مركز التكلفة' : 'Branch'} required>
                 <Select
                   value={form.branchId}
                   onChange={(e) => updateField('branchId', e.target.value)}
@@ -462,12 +432,18 @@ export function NewEmployeeDialog({
                   }))}
                 />
               </FormField>
-              <FormField label={language === 'ar' ? 'تاريخ المباشرة / التعيين' : 'Joining Date'} required>
-                <Input
-                  type="date"
-                  value={form.joiningDate}
-                  onChange={(e) => updateField('joiningDate', e.target.value)}
-                  required
+
+              <FormField label={language === 'ar' ? 'حالة التوظيف' : 'Employment Status'} required>
+                <Select
+                  value={form.employmentStatus}
+                  onChange={(e) => updateField('employmentStatus', e.target.value)}
+                  options={[
+                    { value: 'ACTIVE', label: language === 'ar' ? 'نشط (على رأس عمله)' : 'Active' },
+                    { value: 'ON_LEAVE', label: language === 'ar' ? 'في إجازة' : 'On Leave' },
+                    { value: 'SUSPENDED', label: language === 'ar' ? 'موقوف مؤقتاً' : 'Suspended' },
+                    { value: 'INACTIVE', label: language === 'ar' ? 'غير نشط' : 'Inactive' },
+                    { value: 'TERMINATED', label: language === 'ar' ? 'منتهي الخدمة' : 'Terminated' },
+                  ]}
                 />
               </FormField>
             </div>
@@ -486,6 +462,7 @@ export function NewEmployeeDialog({
                   ]}
                 />
               </FormField>
+
               <FormField label={language === 'ar' ? 'المسمى الوظيفي' : 'Designation'}>
                 <Select
                   value={form.designationId}
@@ -515,11 +492,12 @@ export function NewEmployeeDialog({
                   ]}
                 />
               </FormField>
+
               <FormField label={language === 'ar' ? 'موقع العمل' : 'Work Location'}>
                 <Input
                   value={form.workLocation}
                   onChange={(e) => updateField('workLocation', e.target.value)}
-                  placeholder="Main Office / Site A"
+                  placeholder="Main Office / Field Site A"
                 />
               </FormField>
             </div>
@@ -618,126 +596,6 @@ export function NewEmployeeDialog({
                   />
                 </FormField>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* SECTION 4: EMPLOYEE DOCUMENTS UPLOAD */}
-        {activeSection === 'documents' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-bold text-slate-900">
-                  {language === 'ar' ? 'وثائق الهوية والإقامة والعقد' : 'Identity, Residency & Employment Documents'}
-                </h4>
-                <p className="text-[11px] text-slate-500">
-                  {language === 'ar' ? 'يمكنك إرفاق البطاقة المدنية، جواز السفر، إذن العمل، وعقد العمل مع تتبع تواريخ الانتهاء.' : 'Attach Civil ID, Passport, Work Permit, or Contract copies with expiry dates.'}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                leftIcon={<Plus className="w-3.5 h-3.5" />}
-                onClick={addDocRow}
-              >
-                {language === 'ar' ? 'إضافة وثيقة أخرى' : 'Add Document'}
-              </Button>
-            </div>
-
-            <div className="space-y-3">
-              {initialDocs.map((doc, idx) => (
-                <div key={doc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-700">
-                      {language === 'ar' ? `وثيقة #${idx + 1}` : `Document #${idx + 1}`}
-                    </span>
-                    {initialDocs.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeDocRow(doc.id)}
-                        className="text-rose-600 hover:text-rose-800 text-xs font-medium cursor-pointer"
-                      >
-                        {language === 'ar' ? 'حذف' : 'Remove'}
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    <FormField label={language === 'ar' ? 'نوع الوثيقة' : 'Document Type'} required>
-                      <Select
-                        value={doc.documentType}
-                        onChange={(e) => updateDocRow(doc.id, 'documentType', e.target.value)}
-                        options={[
-                          { value: 'CIVIL_ID', label: language === 'ar' ? 'البطاقة المدنية (Civil ID)' : 'Civil ID / National ID' },
-                          { value: 'PASSPORT', label: language === 'ar' ? 'جواز السفر (Passport)' : 'Passport' },
-                          { value: 'RESIDENCY_VISA', label: language === 'ar' ? 'الإقامة / فيزا (Residency)' : 'Residency Visa' },
-                          { value: 'WORK_PERMIT', label: language === 'ar' ? 'إذن العمل (Work Permit)' : 'Work Permit' },
-                          { value: 'DRIVER_LICENSE', label: language === 'ar' ? 'رخصة القيادة (Driving License)' : 'Driving License' },
-                          { value: 'CONTRACT_COPY', label: language === 'ar' ? 'نسخة العقد (Contract Copy)' : 'Employment Contract' },
-                          { value: 'DIPLOMA', label: language === 'ar' ? 'الشهادة العلمية (Degree)' : 'Educational Certificate' },
-                          { value: 'OTHER', label: language === 'ar' ? 'أخرى (Other)' : 'Other Document' },
-                        ]}
-                      />
-                    </FormField>
-
-                    <FormField label={language === 'ar' ? 'رقم الوثيقة' : 'Document Number'}>
-                      <Input
-                        value={doc.documentNumber}
-                        onChange={(e) => updateDocRow(doc.id, 'documentNumber', e.target.value)}
-                        placeholder="e.g. 290010101234"
-                        className="font-mono"
-                      />
-                    </FormField>
-
-                    <FormField label={language === 'ar' ? 'تاريخ الإصدار' : 'Issue Date'}>
-                      <Input
-                        type="date"
-                        value={doc.issueDate}
-                        onChange={(e) => updateDocRow(doc.id, 'issueDate', e.target.value)}
-                      />
-                    </FormField>
-
-                    <FormField label={language === 'ar' ? 'تاريخ الانتهاء' : 'Expiry Date'}>
-                      <Input
-                        type="date"
-                        value={doc.expiryDate}
-                        onChange={(e) => updateDocRow(doc.id, 'expiryDate', e.target.value)}
-                      />
-                    </FormField>
-                  </div>
-
-                  {/* Document Attachment Upload */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200">
-                    <div className="flex items-center gap-2">
-                      <label className="px-2.5 py-1 bg-white border border-slate-300 rounded text-slate-700 font-medium text-xs hover:bg-slate-50 cursor-pointer inline-flex items-center gap-1.5 shadow-2xs">
-                        <UploadCloud className="w-3.5 h-3.5 text-slate-500" />
-                        <span>{doc.fileName ? (language === 'ar' ? 'تغيير الملف' : 'Change File') : (language === 'ar' ? 'إرفاق ملف الوثيقة (PDF / JPG)' : 'Attach File (PDF, JPG, PNG)')}</span>
-                        <input
-                          type="file"
-                          accept=".pdf,image/*"
-                          onChange={(e) => handleDocFileUpload(doc.id, e)}
-                          className="hidden"
-                        />
-                      </label>
-                      {doc.fileName && (
-                        <span className="text-[11px] font-mono text-emerald-700 flex items-center gap-1">
-                          <Paperclip className="w-3 h-3" />
-                          {doc.fileName}
-                        </span>
-                      )}
-                    </div>
-
-                    <FormField label={language === 'ar' ? 'جهة الإصدار' : 'Issuing Authority'} className="w-full sm:w-64">
-                      <Input
-                        value={doc.issuingAuthority}
-                        onChange={(e) => updateDocRow(doc.id, 'issuingAuthority', e.target.value)}
-                        placeholder="e.g. PACI / Ministry of Interior"
-                      />
-                    </FormField>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         )}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../../shared/i18n/I18nContext.tsx';
 import { LoadingState, useToast } from '../../design-system/index.ts';
+import { apiClient } from '../../lib/api-client.ts';
 import { SupplierMasterTab } from './components/SupplierMasterTab.tsx';
 import { PurchaseRequestsTab } from './components/PurchaseRequestsTab.tsx';
 import { RFQsTab } from './components/RFQsTab.tsx';
@@ -65,30 +66,30 @@ export function PurchaseModule({ company, branches, activeBranchId }: PurchaseMo
         payRes,
         taxRes
       ] = await Promise.all([
-        fetch(`/api/companies/${company.id}/procurement/suppliers`),
-        fetch(`/api/companies/${company.id}/procurement/purchase-requests`),
-        fetch(`/api/companies/${company.id}/procurement/rfqs`),
-        fetch(`/api/companies/${company.id}/procurement/quotations`),
-        fetch(`/api/companies/${company.id}/procurement/purchase-orders`),
-        fetch(`/api/companies/${company.id}/procurement/goods-receipts`),
-        fetch(`/api/companies/${company.id}/procurement/purchase-returns`),
-        fetch(`/api/companies/${company.id}/procurement/debit-notes`),
-        fetch(`/api/companies/${company.id}/procurement/supplier-bills`),
-        fetch(`/api/companies/${company.id}/procurement/payments`),
-        fetch(`/api/companies/${company.id}/sales/tax-codes`),
+        apiClient.get(`/api/companies/${company.id}/procurement/suppliers`),
+        apiClient.get(`/api/companies/${company.id}/procurement/purchase-requests`),
+        apiClient.get(`/api/companies/${company.id}/procurement/rfqs`),
+        apiClient.get(`/api/companies/${company.id}/procurement/quotations`),
+        apiClient.get(`/api/companies/${company.id}/procurement/purchase-orders`),
+        apiClient.get(`/api/companies/${company.id}/procurement/goods-receipts`),
+        apiClient.get(`/api/companies/${company.id}/procurement/purchase-returns`),
+        apiClient.get(`/api/companies/${company.id}/procurement/debit-notes`),
+        apiClient.get(`/api/companies/${company.id}/procurement/supplier-bills`),
+        apiClient.get(`/api/companies/${company.id}/procurement/payments`),
+        apiClient.get(`/api/companies/${company.id}/sales/tax-codes`),
       ]);
 
-      if (sRes.ok) setSuppliers((await sRes.json()).suppliers || []);
-      if (prRes.ok) setRequests((await prRes.json()).purchaseRequests || []);
-      if (rfqRes.ok) setRfqs((await rfqRes.json()).rfqs || []);
-      if (qRes.ok) setQuotations((await qRes.json()).quotations || []);
-      if (poRes.ok) setOrders((await poRes.json()).purchaseOrders || []);
-      if (grnRes.ok) setReceipts((await grnRes.json()).goodsReceipts || []);
-      if (retRes.ok) setReturns((await retRes.json()).purchaseReturns || []);
-      if (dnRes.ok) setDebitNotes((await dnRes.json()).debitNotes || []);
-      if (bRes.ok) setBills((await bRes.json()).supplierBills || []);
-      if (payRes.ok) setPayments((await payRes.json()).payments || []);
-      if (taxRes.ok) setTaxCodes((await taxRes.json()).taxCodes || []);
+      if (sRes) setSuppliers(sRes.suppliers || []);
+      if (prRes) setRequests(prRes.purchaseRequests || []);
+      if (rfqRes) setRfqs(rfqRes.rfqs || []);
+      if (qRes) setQuotations(qRes.quotations || []);
+      if (poRes) setOrders(poRes.purchaseOrders || []);
+      if (grnRes) setReceipts(grnRes.goodsReceipts || []);
+      if (retRes) setReturns(retRes.purchaseReturns || []);
+      if (dnRes) setDebitNotes(dnRes.debitNotes || []);
+      if (bRes) setBills(bRes.supplierBills || []);
+      if (payRes) setPayments(payRes.payments || []);
+      if (taxRes) setTaxCodes(taxRes.taxCodes || []);
     } catch (err) {
       console.error('Error fetching procurement data', err);
     } finally {
@@ -117,7 +118,7 @@ export function PurchaseModule({ company, branches, activeBranchId }: PurchaseMo
   const totalPendingPOs = orders.filter((o) => o.status === 'APPROVED').length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-full overflow-x-hidden">
       {/* Top Header Summary KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-3xs">
@@ -138,16 +139,16 @@ export function PurchaseModule({ company, branches, activeBranchId }: PurchaseMo
         </div>
       </div>
 
-      {/* Navigation Sub-Tabs */}
-      <div className="flex border-b border-slate-200 bg-white rounded-t-lg px-2 overflow-x-auto">
+      {/* Navigation Sub-Tabs: Responsive Flex-Wrap, No Overflow Scrollbar */}
+      <div className="flex flex-wrap gap-1.5 border-b border-slate-200 bg-white rounded-t-lg p-2 max-w-full">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center space-x-1.5 rtl:space-x-reverse px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap transition border-b-2 cursor-pointer ${
+            className={`flex items-center space-x-1.5 rtl:space-x-reverse px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${
               activeTab === tab.id
-                ? 'border-slate-900 text-slate-900 bg-slate-50/70 font-bold'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
+                ? 'bg-slate-900 text-white shadow-2xs font-bold'
+                : 'text-slate-600 hover:bg-slate-100 bg-slate-50 border border-slate-200/60'
             }`}
           >
             {tab.icon}

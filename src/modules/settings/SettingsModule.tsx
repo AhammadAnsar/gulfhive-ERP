@@ -37,6 +37,9 @@ import {
   UserX,
   History,
   Monitor,
+  Camera,
+  UploadCloud,
+  Save,
 } from 'lucide-react';
 import {
   Button,
@@ -1039,30 +1042,229 @@ export function SettingsModule({ company, branches, activeBranchId, onCompanyUpd
         </div>
       ) : subTab === 'profile' ? (
         <div className="bg-white rounded-lg border border-slate-200 p-6 space-y-6">
-          <div className="border-b border-slate-100 pb-4 flex items-center justify-between">
+          <div className="border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-sm font-bold text-slate-900">{company.legalNameEn}</h2>
-              <p className="text-xs text-slate-500 font-arabic">{company.legalNameAr}</p>
+              <h2 className="text-base font-bold text-slate-900">
+                {language === 'ar' ? 'ملف المنشأة والهوية البصرية' : 'Company Profile & Corporate Branding'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                {language === 'ar' ? 'إدارة شعار الشركة، الاسم التجاري، السجل التجاري، والبيانات القانونية والضريبية.' : 'Manage company logo, legal registration, tax ID, and commercial details.'}
+              </p>
             </div>
-            <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-              {company.code}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                {company.code}
+              </span>
+              <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                {company.countryCode} · {company.baseCurrency}
+              </span>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
-            <div className="bg-slate-50 p-3 rounded border border-slate-200">
-              <span className="text-slate-400 block text-[10px] uppercase">Country</span>
-              <span className="font-bold text-slate-800">{company.countryCode}</span>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setIsSubmitting(true);
+              try {
+                const res = await fetch(`/api/companies/${company.id}`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(formData),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to update company profile');
+                addToast({
+                  type: 'success',
+                  title: language === 'ar' ? 'تم تحديث ملف المنشأة' : 'Company Profile Saved',
+                  message: language === 'ar' ? 'تم حفظ الشعار والبيانات المؤسسية بنجاح.' : 'Company branding and legal data synchronized.',
+                });
+                onCompanyUpdated?.();
+              } catch (err: any) {
+                addToast({ type: 'error', title: 'Save Failed', message: err.message });
+              } finally {
+                setIsSubmitting(false);
+              }
+            }}
+            className="space-y-6 text-xs"
+          >
+            {/* Logo Upload Section */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <div className="relative w-20 h-20 rounded-lg bg-white border-2 border-slate-300 flex items-center justify-center p-2 overflow-hidden shrink-0 shadow-inner">
+                {(formData.logoUrl !== undefined ? formData.logoUrl : company.logoUrl) ? (
+                  <img
+                    src={formData.logoUrl !== undefined ? formData.logoUrl : company.logoUrl}
+                    alt="Company Logo Preview"
+                    className="max-w-full max-h-full object-contain"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-sm">
+                    {company.code?.slice(0, 2) || 'GH'}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1.5 flex-1">
+                <div className="font-bold text-slate-900 text-sm">
+                  {language === 'ar' ? 'شعار الشركة الرسمي (Logo)' : 'Official Company Logo'}
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  {language === 'ar'
+                    ? 'يظهر الشعار في الشريط العلوي، بطاقات عمل الموظفين (ID Cards)، كشوف الرواتب، والفواتير الرسمية (PNG, JPG, SVG بحد أقصى 2MB).'
+                    : 'Appears in application top bar, printable employee ID badges, payslips, and customer invoices. (PNG, JPG, SVG up to 2MB).'}
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <label className="px-3 py-1.5 bg-white border border-slate-300 rounded text-slate-700 font-medium text-xs hover:bg-slate-100 cursor-pointer inline-flex items-center gap-1.5 shadow-2xs">
+                    <Camera className="w-3.5 h-3.5 text-slate-600" />
+                    <span>{language === 'ar' ? 'تحميل شعار جديد' : 'Upload Logo'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > 2 * 1024 * 1024) {
+                            addToast({
+                              type: 'error',
+                              title: language === 'ar' ? 'حجم الملف كبير' : 'File Too Large',
+                              message: language === 'ar' ? 'يجب ألا يتجاوز حجم الشعار 2 ميجابايت' : 'Maximum logo size is 2MB',
+                            });
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            setFormData((prev) => ({ ...prev, logoUrl: reader.result as string }));
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+
+                  {(formData.logoUrl !== undefined ? formData.logoUrl : company.logoUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData((prev) => ({ ...prev, logoUrl: '' }))}
+                      className="px-2.5 py-1.5 text-rose-600 hover:bg-rose-50 rounded text-xs font-medium inline-flex items-center gap-1 border border-rose-200 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{language === 'ar' ? 'إزالة الشعار' : 'Remove'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="bg-slate-50 p-3 rounded border border-slate-200">
-              <span className="text-slate-400 block text-[10px] uppercase">Base Currency</span>
-              <span className="font-bold text-slate-800">{company.baseCurrency}</span>
+
+            {/* Legal Names */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField label={language === 'ar' ? 'الاسم القانوني (إنجليزي)' : 'Legal Name (English)'} required>
+                <Input
+                  value={formData.legalNameEn !== undefined ? formData.legalNameEn : company.legalNameEn || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, legalNameEn: e.target.value }))}
+                  placeholder="GulfHive Enterprise Co."
+                  required
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'الاسم القانوني (عربي)' : 'Legal Name (Arabic)'} required>
+                <Input
+                  value={formData.legalNameAr !== undefined ? formData.legalNameAr : company.legalNameAr || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, legalNameAr: e.target.value }))}
+                  placeholder="مؤسسة الخليج للأنظمة المتكاملة"
+                  dir="rtl"
+                  required
+                />
+              </FormField>
             </div>
-            <div className="bg-slate-50 p-3 rounded border border-slate-200">
-              <span className="text-slate-400 block text-[10px] uppercase">Timezone</span>
-              <span className="font-bold text-slate-800">{company.timezone}</span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField label={language === 'ar' ? 'الاسم التجاري (إنجليزي)' : 'Trade Name (English)'}>
+                <Input
+                  value={formData.tradeNameEn !== undefined ? formData.tradeNameEn : company.tradeNameEn || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, tradeNameEn: e.target.value }))}
+                  placeholder="GulfHive Tech"
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'الاسم التجاري (عربي)' : 'Trade Name (Arabic)'}>
+                <Input
+                  value={formData.tradeNameAr !== undefined ? formData.tradeNameAr : company.tradeNameAr || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, tradeNameAr: e.target.value }))}
+                  placeholder="تقنية الخليج"
+                  dir="rtl"
+                />
+              </FormField>
             </div>
-          </div>
+
+            {/* Commercial and Tax Registration */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField label={language === 'ar' ? 'رقم السجل التجاري (CR Number)' : 'Commercial Registration (CR) Number'}>
+                <Input
+                  value={formData.crNumber !== undefined ? formData.crNumber : company.crNumber || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, crNumber: e.target.value }))}
+                  placeholder="CR-123456"
+                  className="font-mono"
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'الرقم الضريبي (Tax / VAT Number)' : 'Tax / VAT Number'}>
+                <Input
+                  value={formData.taxNumber !== undefined ? formData.taxNumber : company.taxNumber || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, taxNumber: e.target.value }))}
+                  placeholder="300012345600003"
+                  className="font-mono"
+                />
+              </FormField>
+            </div>
+
+            {/* Contact Details */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <FormField label={language === 'ar' ? 'البريد الإلكتروني الرسمي' : 'Official Email'}>
+                <Input
+                  type="email"
+                  value={formData.email !== undefined ? formData.email : company.email || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="info@gulfhive.internal"
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'رقم الهاتف الرئيسي' : 'Main Phone'}>
+                <Input
+                  value={formData.phone !== undefined ? formData.phone : company.phone || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
+                  placeholder="+965 22001122"
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'الموقع الإلكتروني' : 'Website'}>
+                <Input
+                  value={formData.website !== undefined ? formData.website : company.website || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, website: e.target.value }))}
+                  placeholder="https://gulfhive.internal"
+                />
+              </FormField>
+            </div>
+
+            {/* Addresses */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField label={language === 'ar' ? 'عنوان المقر الرئيسي (إنجليزي)' : 'Headquarters Address (English)'}>
+                <Input
+                  value={formData.addressEn !== undefined ? formData.addressEn : company.addressEn || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, addressEn: e.target.value }))}
+                  placeholder="Kuwait City, Al-Shuhada St, Tower 4, Floor 12"
+                />
+              </FormField>
+              <FormField label={language === 'ar' ? 'عنوان المقر الرئيسي (عربي)' : 'Headquarters Address (Arabic)'}>
+                <Input
+                  value={formData.addressAr !== undefined ? formData.addressAr : company.addressAr || ''}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, addressAr: e.target.value }))}
+                  placeholder="مدينة الكويت، شارع الشهداء، برج 4، الدور 12"
+                  dir="rtl"
+                />
+              </FormField>
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-slate-200">
+              <Button type="submit" variant="primary" size="md" isLoading={isSubmitting} leftIcon={<Save className="w-4 h-4" />}>
+                {language === 'ar' ? 'حفظ تعديلات ملف المنشأة' : 'Save Company Branding & Details'}
+              </Button>
+            </div>
+          </form>
         </div>
       ) : subTab === 'numbering' ? (
         <div className="space-y-6">

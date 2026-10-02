@@ -33,6 +33,23 @@ identityRouter.post('/auth/login', async (req: Request, res: Response, next: Nex
   }
 });
 
+// Initial Password Establishment for uninitialized accounts
+identityRouter.post('/auth/establish-password', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { usernameOrEmail, password } = req.body;
+    if (!usernameOrEmail || !password) {
+      throw new ValidationError('Username/Email and Password are required.');
+    }
+    const ipAddress = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+    const userAgent = req.headers['user-agent'] || 'Browser';
+    const result = await authRepository.establishInitialPassword(usernameOrEmail, password, ipAddress, userAgent);
+    res.json(result);
+  } catch (error) {
+    logger.warn('Password establishment failed:', (error as any)?.message);
+    next(error);
+  }
+});
+
 // Logout
 identityRouter.post('/auth/logout', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
   try {

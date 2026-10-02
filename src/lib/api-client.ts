@@ -166,6 +166,7 @@ export const apiClient = {
       const token = localStorage.getItem('gulfhive_session_token') || localStorage.getItem('gulfhive_token') || localStorage.getItem('auth_token');
       if (token) {
         defaultHeaders['Authorization'] = `Bearer ${token}`;
+        defaultHeaders['x-session-token'] = token;
       }
     }
 
@@ -180,6 +181,7 @@ export const apiClient = {
 
     try {
       const response = await fetch(url, {
+        credentials: 'same-origin',
         ...restOptions,
         headers: mergedHeaders,
       });
@@ -212,3 +214,47 @@ export const apiClient = {
     return this.request<T>(endpoint, { ...options, method: 'DELETE' });
   },
 };
+
+// Global Browser Fetch Guard: Ensures all relative and absolute /api/ calls carry authentication headers
+if (typeof window !== 'undefined' && !(window as any).__GULFHIVE_FETCH_INTERCEPTED__) {
+  (window as any).__GULFHIVE_FETCH_INTERCEPTED__ = true;
+  const originalFetch = window.fetch;
+  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+    try {
+      const urlString = typeof input === 'string'
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : (input as Request)?.url || '';
+
+      if (urlString.includes('/api/')) {
+        const token = localStorage.getItem('gulfhive_session_token') || localStorage.getItem('gulfhive_token') || localStorage.getItem('auth_token');
+        if (token) {
+          init = init ? { ...init } : {};
+          if (init.headers instanceof Headers) {
+            if (!init.headers.has('Authorization')) init.headers.set('Authorization', `Bearer ${token}`);
+            if (!init.headers.has('x-session-token')) init.headers.set('x-session-token', token);
+          } else if (Array.isArray(init.headers)) {
+            const hasAuth = init.headers.some(([k]) => k.toLowerCase() === 'authorization');
+            if (!hasAuth) {
+              init.headers.push(['Authorization', `Bearer ${token}`]);
+              init.headers.push(['x-session-token', token]);
+            }
+          } else {
+            const h = (init.headers as Record<string, string>) || {};
+            if (!h['Authorization'] && !h['authorization']) {
+              init.headers = {
+                ...h,
+                'Authorization': `Bearer ${token}`,
+                'x-session-token': token,
+              };
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-blocking safety fallback
+    }
+    return originalFetch.call(this, input, init);
+  };
+}

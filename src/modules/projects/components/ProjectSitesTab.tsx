@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useI18n } from '../../../shared/i18n/I18nContext.tsx';
-import { Button, Input, Select, Dialog, useToast } from '../../../design-system/index.ts';
+import { Button, Input, Select, Dialog, useToast, LoadingState } from '../../../design-system/index.ts';
+import { apiClient } from '../../../lib/api-client.ts';
 import {
   MapPin,
   Plus,
@@ -11,7 +12,7 @@ import {
   Calendar,
   UserCheck,
   Trash2,
-  Edit2
+  AlertCircle
 } from 'lucide-react';
 
 interface ProjectSitesTabProps {
@@ -34,6 +35,8 @@ export function ProjectSitesTab({
   const [selectedProjectId, setSelectedProjectId] = useState('ALL');
   const [showAddSiteModal, setShowAddSiteModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingSites, setIsLoadingSites] = useState(false);
+  const [sites, setSites] = useState<any[]>([]);
 
   const [newSite, setNewSite] = useState({
     projectId: '',
@@ -46,23 +49,32 @@ export function ProjectSitesTab({
     status: 'ACTIVE',
   });
 
-  // Extract all sites across projects
-  const allProjectSites: any[] = [];
+  const fetchSites = async () => {
+    if (!company?.id) return;
+    setIsLoadingSites(true);
+    try {
+      const data = await apiClient.get(`/api/companies/${company.id}/projects/sites`);
+      setSites(Array.isArray(data?.sites) ? data.sites : []);
+    } catch (err: any) {
+      console.warn('Failed to load project sites:', err);
+    } finally {
+      setIsLoadingSites(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSites();
+  }, [company?.id]);
+
+  // Combine real database sites with primary project virtual sites if no site is registered yet
+  const displayedSites: any[] = [...sites];
+
+  // If a project has no recorded site in DB, provide its primary HQ site view
   projects.forEach((proj) => {
-    if (proj.sites && proj.sites.length > 0) {
-      proj.sites.forEach((s: any) => {
-        allProjectSites.push({
-          ...s,
-          projectNameEn: proj.nameEn,
-          projectNameAr: proj.nameAr,
-          projectCode: proj.projectCode,
-          projectId: proj.id,
-        });
-      });
-    } else {
-      // Create primary project site record if project is active
-      allProjectSites.push({
-        id: proj.id * 100,
+    const hasSite = displayedSites.some((s) => s.projectId === proj.id);
+    if (!hasSite) {
+      displayedSites.push({
+        id: proj.id * 1000,
         projectId: proj.id,
         projectNameEn: proj.nameEn,
         projectNameAr: proj.nameAr,
@@ -74,16 +86,18 @@ export function ProjectSitesTab({
         endDate: proj.plannedEndDate,
         siteSupervisorEmployeeId: proj.projectManagerEmployeeId,
         status: proj.status || 'ACTIVE',
+        isDefaultVirtual: true,
       });
     }
   });
 
-  const filteredSites = allProjectSites.filter((s) => {
-    const matchesSearch =
-      s.siteNameEn.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.siteCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.projectNameEn.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredSites = displayedSites.filter((s) => {
+    const siteName = (s.siteNameEn || s.nameEn || '').toLowerCase();
+    const siteCode = (s.siteCode || '').toLowerCase();
+    const projectName = (s.projectNameEn || '').toLowerCase();
+    const q = searchQuery.toLowerCase();
 
+    const matchesSearch = !q || siteName.includes(q) || siteCode.includes(q) || projectName.includes(q);
     const matchesProject = selectedProjectId === 'ALL' || String(s.projectId) === selectedProjectId;
 
     return matchesSearch && matchesProject;
@@ -91,19 +105,71 @@ export function ProjectSitesTab({
 
   const handleAddSite = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newSite.projectId || !newSite.siteCode || !newSite.siteNameEn) {
+      addToast({ type: 'warning', title: 'Validation', message: 'Project, site code, and site name are required.' });
+      return;
+    }
     setIsSubmitting(true);
     try {
+      await apiClient.post(`/api/companies/${company.id}/projects/sites`, {
+        projectId: Number(newSite.projectId),
+        siteCode: newSite.siteCode,
+        siteNameEn: newSite.siteNameEn,
+        siteNameAr: newSite.siteNameAr || newSite.siteNameEn,
+        siteSupervisorEmployeeId: newSite.siteSupervisorEmployeeId || undefined,
+        startDate: newSite.startDate,
+        endDate: newSite.endDate || undefined,
+        status: newSite.status,
+      });
+
       addToast({
         type: 'success',
         title: language === 'ar' ? 'تمت إضافة موقع العمل' : 'Project Site Added',
-        message: language === 'ar' ? 'تم ربط الموقع بالمشروع وتعيين المشرف' : 'Site location linked to project.',
+        message: language === 'ar' ? 'تم حفظ الموقع وتعيين المشرف بنجاح' : 'Site location linked to project and persisted in database.',
       });
       setShowAddSiteModal(false);
+      setNewSite({
+        projectId: '',
+        siteNameEn: '',
+        siteNameAr: '',
+        siteCode: '',
+        siteSupervisorEmployeeId: '',
+        startDate: new Date().toISOString().slice(0, 10),
+        endDate: '',
+        status: 'ACTIVE',
+      });
+      await fetchSites();
       onRefresh();
-    } catch {
-      addToast({ type: 'error', title: 'Error', message: 'Failed to add project site' });
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Error', message: err.message || 'Failed to add project site' });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteSite = async (site: any) => {
+    if (site.isDefaultVirtual) {
+      addToast({
+        type: 'info',
+        title: 'Information',
+        message: language === 'ar' ? 'هذا الموقع الافتراضي مرتبط بتهيئة المشروع الأولية' : 'This is the project default primary location.',
+      });
+      return;
+    }
+    if (!window.confirm(language === 'ar' ? 'هل أنت متأكد من حذف موقع العمل هذا نهائياً؟' : 'Are you sure you want to delete this project site?')) {
+      return;
+    }
+    try {
+      await apiClient.delete(`/api/companies/${company.id}/projects/sites/${site.id}`);
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'تم حذف الموقع' : 'Site Deleted',
+        message: language === 'ar' ? 'تم حذف موقع العمل بنجاح' : 'Project site removed successfully.',
+      });
+      await fetchSites();
+      onRefresh();
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Error', message: err.message || 'Failed to delete site' });
     }
   };
 
@@ -165,18 +231,28 @@ export function ProjectSitesTab({
         </div>
       </div>
 
+      {isLoadingSites && (
+        <LoadingState label={language === 'ar' ? 'جاري تحميل مواقع المشاريع...' : 'Loading project sites...'} />
+      )}
+
       {/* Sites Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredSites.length === 0 ? (
+        {filteredSites.length === 0 && !isLoadingSites ? (
           <div className="col-span-full bg-white rounded-lg border border-slate-200 p-12 text-center space-y-3">
             <MapPin className="w-8 h-8 text-slate-300 mx-auto" />
             <h3 className="text-sm font-semibold text-slate-800">
               {language === 'ar' ? 'لا توجد مواقع مسجلة' : 'No Project Sites Found'}
             </h3>
+            <p className="text-xs text-slate-500">
+              {language === 'ar' ? 'انقر على "إضافة موقع للمشروع" لإنشاء موقع ميداني جديد.' : 'Click "Add Project Site" to register a new field location.'}
+            </p>
           </div>
         ) : (
           filteredSites.map((site) => {
             const supervisor = employees.find((e) => e.id === site.siteSupervisorEmployeeId);
+            const supervisorName = supervisor
+              ? `${supervisor.firstNameEn || ''} ${supervisor.lastNameEn || ''}`.trim()
+              : (site.supervisorFirstName ? `${site.supervisorFirstName} ${site.supervisorLastName || ''}`.trim() : null);
 
             return (
               <div
@@ -188,25 +264,47 @@ export function ProjectSitesTab({
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
                       {site.siteCode}
                     </span>
-                    <h3 className="text-sm font-bold text-slate-900 mt-1">{site.siteNameEn}</h3>
-                    <p className="text-xs text-slate-500">{site.projectNameEn}</p>
+                    <h3 className="text-sm font-bold text-slate-900 mt-1">
+                      {language === 'ar' ? (site.siteNameAr || site.siteNameEn) : site.siteNameEn}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {site.projectCode} • {language === 'ar' ? site.projectNameAr : site.projectNameEn}
+                    </p>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    {site.status}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] px-2 py-0.5 rounded font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      {site.status}
+                    </span>
+                    {!site.isDefaultVirtual && (
+                      <button
+                        onClick={() => handleDeleteSite(site)}
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition cursor-pointer"
+                        title={language === 'ar' ? 'حذف الموقع' : 'Delete Site'}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="pt-2 border-t border-slate-100 space-y-1.5 text-xs text-slate-600">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400">{language === 'ar' ? 'المشرف الميداني:' : 'Site Supervisor:'}</span>
+                    <span className="text-slate-500 flex items-center gap-1">
+                      <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                      {language === 'ar' ? 'المشرف الميداني:' : 'Supervisor:'}
+                    </span>
                     <span className="font-medium text-slate-800">
-                      {supervisor ? `${supervisor.firstNameEn} ${supervisor.lastNameEn}` : 'Assigned to PM'}
+                      {supervisorName || (language === 'ar' ? 'غير محدد' : 'Unassigned')}
                     </span>
                   </div>
+
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400">{language === 'ar' ? 'فترة التشغيل:' : 'Active Period:'}</span>
-                    <span className="font-mono text-slate-700">
-                      {site.startDate} → {site.endDate || 'Ongoing'}
+                    <span className="text-slate-500 flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                      {language === 'ar' ? 'الفترة الزمنية:' : 'Duration:'}
+                    </span>
+                    <span className="font-mono text-[11px] text-slate-700">
+                      {site.startDate || '—'} → {site.endDate || (language === 'ar' ? 'مستمر' : 'Ongoing')}
                     </span>
                   </div>
                 </div>
@@ -221,12 +319,12 @@ export function ProjectSitesTab({
         <Dialog
           isOpen={showAddSiteModal}
           onClose={() => setShowAddSiteModal(false)}
-          title={language === 'ar' ? 'إضافة موقع عمل للمشروع' : 'Add Project Site Location'}
+          title={language === 'ar' ? 'إضافة موقع عمل جديد للمشروع' : 'Add Project Operational Site'}
           size="md"
         >
           <form onSubmit={handleAddSite} className="space-y-4">
             <div>
-              <label className="text-xs font-semibold text-slate-700">{language === 'ar' ? 'المشروع المرتبط *' : 'Associated Project *'}</label>
+              <label className="text-xs font-semibold text-slate-700">{language === 'ar' ? 'المشروع المستهدف *' : 'Target Project *'}</label>
               <Select
                 required
                 value={newSite.projectId}
@@ -275,6 +373,34 @@ export function ProjectSitesTab({
                 value={newSite.siteNameEn}
                 onChange={(e) => setNewSite({ ...newSite, siteNameEn: e.target.value })}
               />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-slate-700">{language === 'ar' ? 'اسم الموقع (عربي)' : 'Site Name (AR)'}</label>
+              <Input
+                placeholder="مثال: البرج الرئيسي للمستشفى - القطاع ب"
+                value={newSite.siteNameAr}
+                onChange={(e) => setNewSite({ ...newSite, siteNameAr: e.target.value })}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700">{language === 'ar' ? 'تاريخ البدء' : 'Start Date'}</label>
+                <Input
+                  type="date"
+                  value={newSite.startDate}
+                  onChange={(e) => setNewSite({ ...newSite, startDate: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700">{language === 'ar' ? 'تاريخ الانتهاء' : 'End Date'}</label>
+                <Input
+                  type="date"
+                  value={newSite.endDate}
+                  onChange={(e) => setNewSite({ ...newSite, endDate: e.target.value })}
+                />
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">

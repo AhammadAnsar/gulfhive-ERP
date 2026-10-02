@@ -23,7 +23,7 @@ import { Button, Input, Select, FormField, useToast } from '../design-system/ind
 import { apiClient } from '../lib/api-client.ts';
 
 interface FirstRunWizardProps {
-  onCompanyCreated: (tenant: any) => void;
+  onCompanyCreated: (tenant: any, token?: string, user?: any) => void;
 }
 
 export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
@@ -69,6 +69,8 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
     // Step 4: Administrator Profile
     adminDisplayName: 'Master Administrator',
     adminEmail: 'admin@gulfhive.internal',
+    adminPassword: '',
+    adminPasswordConfirm: '',
     adminUid: `admin_${Date.now()}`,
   });
 
@@ -135,6 +137,14 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
         setErrorMessage(language === 'ar' ? 'البريد الإلكتروني لمدير المنشأة مطلوب' : 'Administrator email is required');
         return false;
       }
+      if (!formData.adminPassword || formData.adminPassword.length < 8) {
+        setErrorMessage(language === 'ar' ? 'كلمة المرور يجب أن لا تقل عن 8 خانات' : 'Administrator password must be at least 8 characters');
+        return false;
+      }
+      if (formData.adminPassword !== formData.adminPasswordConfirm) {
+        setErrorMessage(language === 'ar' ? 'كلمتا المرور غير متطابقتين' : 'Passwords do not match');
+        return false;
+      }
     }
     return true;
   };
@@ -171,7 +181,11 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
         message: `${data.tenant.code} - ${language === 'ar' ? data.tenant.legalNameAr : data.tenant.legalNameEn}`,
       });
 
-      onCompanyCreated(data.tenant);
+      if (data.token) {
+        localStorage.setItem('gulfhive_session_token', data.token);
+      }
+
+      onCompanyCreated(data.tenant, data.token, data.user);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to establish company. Please verify details and retry.');
     } finally {
@@ -522,6 +536,26 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   value={formData.adminEmail}
                   onChange={(e) => updateField('adminEmail', e.target.value)}
                   placeholder="admin@enterprise.com"
+                  required
+                />
+              </FormField>
+
+              <FormField label={language === 'ar' ? 'كلمة المرور المشفرة *' : 'Secure Administrator Password *'} required>
+                <Input
+                  type="password"
+                  value={formData.adminPassword}
+                  onChange={(e) => updateField('adminPassword', e.target.value)}
+                  placeholder="••••••••••••"
+                  required
+                />
+              </FormField>
+
+              <FormField label={language === 'ar' ? 'تأكيد كلمة المرور *' : 'Confirm Password *'} required>
+                <Input
+                  type="password"
+                  value={formData.adminPasswordConfirm}
+                  onChange={(e) => updateField('adminPasswordConfirm', e.target.value)}
+                  placeholder="••••••••••••"
                   required
                 />
               </FormField>

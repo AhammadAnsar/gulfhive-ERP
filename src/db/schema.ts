@@ -21,6 +21,7 @@ export const tenants = pgTable('tenants', {
   phone: varchar('phone', { length: 32 }),
   email: text('email'),
   website: text('website'),
+  logoUrl: text('logo_url'),
   addressEn: text('address_en'),
   addressAr: text('address_ar'),
   isActive: boolean('is_active').notNull().default(true),

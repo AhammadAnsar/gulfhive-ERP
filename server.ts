@@ -14,6 +14,7 @@ import { TenantContextHolder, TenantContext } from './src/core/domain/tenant-con
 import { authenticateToken, requireCompanyAccess } from './src/core/security/auth.middleware.ts';
 import { errorHandler } from './src/core/security/error-handler.ts';
 import { MigrationRunner } from './src/infrastructure/database/migrations/migration-runner.ts';
+import { ensureDefaultAdmin } from './src/infrastructure/database/seeds/ensure-admin.ts';
 import { apiRouter } from './src/routes/index.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -123,6 +124,7 @@ async function startServer() {
     EnvironmentValidator.assertValidOrExit();
     const migrationRunner = new MigrationRunner();
     await migrationRunner.runAllMigrations();
+    await ensureDefaultAdmin();
   } catch (mErr: any) {
     logger.error('[FATAL] Database migration failed! Halting application startup to prevent corrupt operations with incomplete schema.', {
       error: mErr.message,

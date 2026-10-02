@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../../../shared/i18n/I18nContext.tsx';
 import { Button, Input, Dialog, useToast, LoadingState } from '../../../design-system/index.ts';
+import { apiClient } from '../../../lib/api-client.ts';
 import { ShieldAlert } from 'lucide-react';
 
 interface ProjectBulkDeleteModalProps {
@@ -30,13 +31,9 @@ export function ProjectBulkDeleteModal({
     if (isOpen && projectIds.length > 0) {
       setIsLoading(true);
       setReason('');
-      fetch(`/api/companies/${companyId}/projects/bulk-delete/preflight`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIds }),
-      })
-        .then((res) => res.json())
-        .then((data) => setPreflightSummary(data.preflight || null))
+      apiClient
+        .post(`/api/companies/${companyId}/projects/bulk-delete/preflight`, { projectIds })
+        .then((data) => setPreflightSummary(data?.preflight || null))
         .catch((err) => console.error(err))
         .finally(() => setIsLoading(false));
     }
@@ -56,29 +53,23 @@ export function ProjectBulkDeleteModal({
 
     setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/companies/${companyId}/projects/bulk-delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIds, reason }),
+      await apiClient.post(`/api/companies/${companyId}/projects/bulk-delete`, {
+        projectIds,
+        reason,
       });
 
-      if (res.ok) {
-        addToast({
-          type: 'success',
-          title: language === 'ar' ? 'اكتملت العملية' : 'Bulk Operation Completed',
-          message:
-            language === 'ar'
-              ? `تمت معالجة ${projectIds.length} مشروع بأمان.`
-              : `Processed ${projectIds.length} project records safely.`,
-        });
-        onCompleted();
-        onClose();
-      } else {
-        const err = await res.json();
-        addToast({ type: 'error', title: 'Error', message: err.error || 'Failed bulk delete' });
-      }
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'اكتملت العملية' : 'Bulk Operation Completed',
+        message:
+          language === 'ar'
+            ? `تمت معالجة ${projectIds.length} مشروع بأمان.`
+            : `Processed ${projectIds.length} project records safely.`,
+      });
+      onCompleted();
+      onClose();
     } catch (err: any) {
-      addToast({ type: 'error', title: 'Error', message: err.message || 'Network error' });
+      addToast({ type: 'error', title: 'Error', message: err.message || 'Failed bulk delete' });
     } finally {
       setIsSubmitting(false);
     }

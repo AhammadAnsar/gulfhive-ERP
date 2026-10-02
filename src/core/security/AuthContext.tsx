@@ -26,6 +26,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
+  setAuthSession: (user: UserContext, token: string) => void;
+  switchCompany: (companyId: string) => Promise<void>;
   logout: () => Promise<void>;
   can: (permissionCode: string) => boolean;
   hasCompanyAccess: (companyId: string) => boolean;
@@ -35,18 +37,25 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserContext | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('gulfhive_session_token'));
+  const [token, setToken] = useState<string | null>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('gulfhive_session_token');
+    }
+    return null;
+  });
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Validate session on mount
   useEffect(() => {
     const checkSession = async () => {
-      const storedToken = localStorage.getItem('gulfhive_session_token');
+      const storedToken = typeof localStorage !== 'undefined' ? localStorage.getItem('gulfhive_session_token') : null;
       if (!storedToken) {
-        // Fallback default admin for local preview
-        fetchMe('system');
+        setUser(null);
+        setToken(null);
+        setIsLoading(false);
         return;
       }
+
       try {
         const data = await apiClient.get('/api/auth/me');
         if (data && data.user) {
@@ -55,46 +64,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else {
           localStorage.removeItem('gulfhive_session_token');
           setToken(null);
-          fetchMe('system');
+          setUser(null);
         }
       } catch (err) {
-        console.error('Failed to verify session', err);
+        console.warn('[GulfHive Auth] Active session verification rejected:', err);
         localStorage.removeItem('gulfhive_session_token');
         setToken(null);
-        fetchMe('system');
+        setUser(null);
       } finally {
         setIsLoading(false);
       }
     };
 
     checkSession();
-  }, []);
 
-  const fetchMe = async (_fallbackMode?: string) => {
-    try {
-      const data = await apiClient.get('/api/auth/me');
-      if (data && data.user) {
-        setUser(data.user);
+    // Listen for unauthorized 401 events dispatched by API client
+    const handleUnauthorized = () => {
+      console.warn('[GulfHive Auth] Received 401 Unauthorized event. Clearing session.');
+      setUser(null);
+      setToken(null);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('gulfhive_session_token');
       }
-    } catch (err) {
-      console.error('Failed to fetch default user context', err);
-    } finally {
-      setIsLoading(false);
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('gulfhive:unauthorized', handleUnauthorized);
+      return () => {
+        window.removeEventListener('gulfhive:unauthorized', handleUnauthorized);
+      };
     }
-  };
+  }, []);
 
   const login = async (username: string, password: string) => {
     setIsLoading(true);
     try {
       const data = await apiClient.post('/api/auth/login', { username, password });
+      if (!data || !data.token || !data.user) {
+        throw new Error('Invalid login response from server.');
+      }
       setUser(data.user);
       setToken(data.token);
-      localStorage.setItem('gulfhive_session_token', data.token);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('gulfhive_session_token', data.token);
+      }
     } catch (err: any) {
       throw new Error(err.message || 'Login failed');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const setAuthSession = (newUser: UserContext, newToken: string) => {
+    setUser(newUser);
+    setToken(newToken);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('gulfhive_session_token', newToken);
+    }
+    setIsLoading(false);
+  };
+
+  const switchCompany = async (companyId: string) => {
+    if (!user || !user.authorizedCompanyIds.includes(companyId)) {
+      throw new Error('Access denied to requested company context.');
+    }
+    setUser((prev) => (prev ? { ...prev, activeCompanyId: companyId } : null));
   };
 
   const logout = async () => {
@@ -103,11 +137,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await apiClient.post('/api/auth/logout');
       }
     } catch (err) {
-      console.error('Logout request error', err);
+      console.warn('[GulfHive Auth] Logout request error', err);
     } finally {
       setUser(null);
       setToken(null);
-      localStorage.removeItem('gulfhive_session_token');
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('gulfhive_session_token');
+      }
     }
   };
 
@@ -132,6 +168,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         login,
         logout,
+        setAuthSession,
+        switchCompany,
         can,
         hasCompanyAccess,
       }}

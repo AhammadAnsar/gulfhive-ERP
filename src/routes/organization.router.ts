@@ -131,6 +131,7 @@ organizationRouter.post(['/setup/company', '/setup/establish'], async (req: Requ
       adminUid: effectiveAdminUid,
       adminEmail,
       adminDisplayName,
+      adminPassword: req.body.adminPassword,
     });
 
     res.status(201).json({
@@ -138,6 +139,7 @@ organizationRouter.post(['/setup/company', '/setup/establish'], async (req: Requ
       tenant: result.tenant,
       branch: result.branch,
       user: result.user,
+      token: (result as any).token,
     });
   } catch (error) {
     next(error);
@@ -165,6 +167,33 @@ organizationRouter.get('/companies/:id', async (req: Request, res: Response, nex
       throw new NotFoundError('Company', req.params.id);
     }
     res.json({ company });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update Company Details & Logo
+organizationRouter.put('/companies/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const updated = await companyRepository.updateCompany(req.params.id, {
+      ...req.body,
+      actorId: req.user?.displayName || 'admin',
+      actorEmail: req.user?.email || 'admin@gulfhive.internal',
+    });
+    res.json({ company: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+organizationRouter.patch('/companies/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const updated = await companyRepository.updateCompany(req.params.id, {
+      ...req.body,
+      actorId: req.user?.displayName || 'admin',
+      actorEmail: req.user?.email || 'admin@gulfhive.internal',
+    });
+    res.json({ company: updated });
   } catch (error) {
     next(error);
   }

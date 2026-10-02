@@ -1273,6 +1273,158 @@ export class ProjectsRepository {
 
     return { bill, settlementId };
   }
+
+  // ==========================================
+  // PROJECT SITES
+  // ==========================================
+
+  public async listProjectSites(tenantId: string, projectId?: number) {
+    return db
+      .select({
+        id: projectSites.id,
+        tenantId: projectSites.tenantId,
+        projectId: projectSites.projectId,
+        clientSiteId: projectSites.clientSiteId,
+        siteCode: projectSites.siteCode,
+        startDate: projectSites.startDate,
+        endDate: projectSites.endDate,
+        status: projectSites.status,
+        siteSupervisorEmployeeId: projectSites.siteSupervisorEmployeeId,
+        createdAt: projectSites.createdAt,
+        projectNameEn: projects.nameEn,
+        projectNameAr: projects.nameAr,
+        projectCode: projects.projectCode,
+        siteNameEn: clientSites.nameEn,
+        siteNameAr: clientSites.nameAr,
+        supervisorFirstName: employees.firstNameEn,
+        supervisorLastName: employees.lastNameEn,
+      })
+      .from(projectSites)
+      .leftJoin(projects, eq(projectSites.projectId, projects.id))
+      .leftJoin(clientSites, eq(projectSites.clientSiteId, clientSites.id))
+      .leftJoin(employees, eq(projectSites.siteSupervisorEmployeeId, employees.id))
+      .where(
+        projectId
+          ? and(eq(projectSites.tenantId, tenantId), eq(projectSites.projectId, projectId))
+          : eq(projectSites.tenantId, tenantId)
+      )
+      .orderBy(desc(projectSites.createdAt));
+  }
+
+  public async createProjectSite(tenantId: string, input: {
+    projectId: number;
+    siteCode: string;
+    siteNameEn?: string;
+    siteNameAr?: string;
+    siteSupervisorEmployeeId?: string | null;
+    startDate?: string;
+    endDate?: string | null;
+    status?: string;
+    clientSiteId?: number;
+  }, actorId: string) {
+    const existing = await db
+      .select()
+      .from(projectSites)
+      .where(and(eq(projectSites.tenantId, tenantId), eq(projectSites.projectId, input.projectId), eq(projectSites.siteCode, input.siteCode.toUpperCase().trim())))
+      .limit(1);
+
+    if (existing.length > 0) {
+      throw new Error(`Site code '${input.siteCode}' already exists for this project.`);
+    }
+
+    const [proj] = await db
+      .select()
+      .from(projects)
+      .where(and(eq(projects.tenantId, tenantId), eq(projects.id, input.projectId)))
+      .limit(1);
+
+    if (!proj) {
+      throw new Error(`Project with ID ${input.projectId} not found.`);
+    }
+
+    let clientSiteId = input.clientSiteId;
+    if (!clientSiteId) {
+      const siteNameEn = input.siteNameEn || `${proj.nameEn} - Site ${input.siteCode}`;
+      const siteNameAr = input.siteNameAr || `${proj.nameAr} - موقع ${input.siteCode}`;
+      const existingClientSite = await db
+        .select()
+        .from(clientSites)
+        .where(and(eq(clientSites.clientId, proj.clientId), eq(clientSites.nameEn, siteNameEn)))
+        .limit(1);
+
+      if (existingClientSite.length > 0) {
+        clientSiteId = existingClientSite[0].id;
+      } else {
+        const [newCs] = await db
+          .insert(clientSites)
+          .values({
+            clientId: proj.clientId,
+            nameEn: siteNameEn,
+            nameAr: siteNameAr,
+            addressEn: 'Project Site Location',
+            addressAr: 'موقع العمل الميداني',
+          })
+          .returning();
+        clientSiteId = newCs.id;
+      }
+    }
+
+    const inserted = await db
+      .insert(projectSites)
+      .values({
+        tenantId,
+        projectId: input.projectId,
+        clientSiteId,
+        siteCode: input.siteCode.toUpperCase().trim(),
+        siteSupervisorEmployeeId: input.siteSupervisorEmployeeId || null,
+        startDate: input.startDate || new Date().toISOString().slice(0, 10),
+        endDate: input.endDate || null,
+        status: input.status || 'ACTIVE',
+        createdBy: actorId,
+        updatedBy: actorId,
+      })
+      .returning();
+
+    await db.insert(auditLogs).values({
+      tenantId,
+      actorId,
+      action: 'CREATE',
+      entityType: 'PROJECT_SITE',
+      entityId: String(inserted[0].id),
+      previousState: null,
+      resultingState: inserted[0],
+    });
+
+    return inserted[0];
+  }
+
+  public async deleteProjectSite(tenantId: string, siteId: number, actorId: string) {
+    const existing = await db
+      .select()
+      .from(projectSites)
+      .where(and(eq(projectSites.tenantId, tenantId), eq(projectSites.id, siteId)))
+      .limit(1);
+
+    if (existing.length === 0) {
+      throw new Error(`Site record #${siteId} not found.`);
+    }
+
+    await db
+      .delete(projectSites)
+      .where(and(eq(projectSites.tenantId, tenantId), eq(projectSites.id, siteId)));
+
+    await db.insert(auditLogs).values({
+      tenantId,
+      actorId,
+      action: 'DELETE',
+      entityType: 'PROJECT_SITE',
+      entityId: String(siteId),
+      previousState: existing[0],
+      resultingState: null,
+    });
+
+    return { success: true, deletedSiteId: siteId };
+  }
 }
 
 export const projectsRepository = new ProjectsRepository();

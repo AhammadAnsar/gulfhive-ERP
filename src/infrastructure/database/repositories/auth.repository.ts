@@ -709,6 +709,46 @@ export class AuthRepository {
     return { success: true, message: 'Password reset successfully' };
   }
 
+  public async establishInitialPassword(usernameOrEmail: string, newPassword: string, ipAddress = '127.0.0.1', userAgent = 'Browser') {
+    const term = usernameOrEmail.toLowerCase().trim();
+    const matchedUsers = await db
+      .select()
+      .from(users)
+      .where(sql`LOWER(${users.email}) = ${term} OR LOWER(${users.username}) = ${term}`)
+      .limit(1);
+
+    if (matchedUsers.length === 0) {
+      throw new Error('User account not found with provided identifier');
+    }
+
+    const u = matchedUsers[0];
+    if (u.passwordHash && !u.mustChangePassword) {
+      throw new Error('Account password already established. Please sign in or contact administrator.');
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+      throw new Error('Password must be at least 8 characters long.');
+    }
+
+    const passwordHash = this.hashPassword(newPassword);
+    await db
+      .update(users)
+      .set({
+        passwordHash,
+        mustChangePassword: false,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        status: 'ACTIVE',
+        lastPasswordChangedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, u.id));
+
+    logger.audit('PASSWORD_ESTABLISH', 'USER', u.id.toString(), { establishedBy: 'user' }, { tenantId: u.tenantId ?? undefined });
+
+    return this.login(usernameOrEmail, newPassword, ipAddress, userAgent);
+  }
+
   private async verifyNotLastAdmin(userId: number) {
     const adminRoles = await db
       .select({ userId: userRoles.userId })

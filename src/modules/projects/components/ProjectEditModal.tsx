@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../../../shared/i18n/I18nContext.tsx';
 import { Button, Input, Select, Dialog, useToast } from '../../../design-system/index.ts';
+import { apiClient } from '../../../lib/api-client.ts';
 
 interface ProjectEditModalProps {
   isOpen: boolean;
@@ -76,32 +77,23 @@ export function ProjectEditModal({
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/companies/${companyId}/projects/${project.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          clientId: Number(formData.clientId),
-          principalSupplierId: formData.principalSupplierId ? Number(formData.principalSupplierId) : null,
-          billingProfileId: Number(formData.billingProfileId),
-          projectManagerEmployeeId: formData.projectManagerEmployeeId || null,
-        }),
+      await apiClient.put(`/api/companies/${companyId}/projects/${project.id}`, {
+        ...formData,
+        clientId: Number(formData.clientId),
+        principalSupplierId: formData.principalSupplierId ? Number(formData.principalSupplierId) : null,
+        billingProfileId: Number(formData.billingProfileId),
+        projectManagerEmployeeId: formData.projectManagerEmployeeId || null,
       });
 
-      if (res.ok) {
-        addToast({
-          type: 'success',
-          title: language === 'ar' ? 'تم تحديث المشروع' : 'Project Updated',
-          message: language === 'ar' ? 'تم حفظ التعديلات بنجاح' : 'Project record updated successfully.',
-        });
-        onSaved();
-        onClose();
-      } else {
-        const err = await res.json();
-        addToast({ type: 'error', title: 'Error', message: err.error || 'Failed to update project' });
-      }
+      addToast({
+        type: 'success',
+        title: language === 'ar' ? 'تم تحديث المشروع' : 'Project Updated',
+        message: language === 'ar' ? 'تم حفظ التعديلات بنجاح' : 'Project record updated successfully.',
+      });
+      onSaved();
+      onClose();
     } catch (err: any) {
-      addToast({ type: 'error', title: 'Error', message: err.message || 'Network error' });
+      addToast({ type: 'error', title: 'Error', message: err.message || 'Failed to update project' });
     } finally {
       setIsSubmitting(false);
     }

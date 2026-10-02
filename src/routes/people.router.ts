@@ -111,6 +111,7 @@ peopleRouter.post('/companies/:companyId/employees', async (req: Request, res: R
       emergencyContactName,
       emergencyContactRelationship,
       emergencyContactPhone,
+      documents,
       actorId,
       actorEmail,
     } = req.body;
@@ -180,6 +181,7 @@ peopleRouter.post('/companies/:companyId/employees', async (req: Request, res: R
       emergencyContactName,
       emergencyContactRelationship,
       emergencyContactPhone,
+      documents: Array.isArray(documents) ? documents : undefined,
       actorId: actorId || 'admin',
       actorEmail: actorEmail || 'admin@gulfhive.internal',
     });
@@ -371,6 +373,16 @@ peopleRouter.post('/companies/:companyId/employees/:employeeId/documents', async
       actorId: actorId || 'admin',
     });
     res.status(201).json({ document: doc });
+  } catch (error) {
+    next(error);
+  }
+});
+
+peopleRouter.delete('/companies/:companyId/employees/:employeeId/documents/:documentId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const actorId = (req.query.actorId as string) || req.user?.displayName || 'admin';
+    const deleted = await peopleRepository.deleteEmployeeDocument(req.params.companyId, req.params.employeeId, req.params.documentId, actorId);
+    res.json({ success: true, document: deleted });
   } catch (error) {
     next(error);
   }

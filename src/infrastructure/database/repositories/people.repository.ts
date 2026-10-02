@@ -133,6 +133,9 @@ export interface CreateEmployeeInput {
   emergencyContactRelationship?: string;
   emergencyContactPhone?: string;
 
+  // Initial Documents Upload
+  documents?: AddDocumentInput[];
+
   actorId: string;
   actorEmail?: string;
 }
@@ -733,6 +736,34 @@ export class PeopleRepository {
           status: new Date(input.passportExpiry) < new Date() ? 'EXPIRED' : 'VALID',
           createdBy: input.actorEmail || input.actorId,
         });
+      }
+
+      // 9b. Insert Additional Enrolled Documents
+      if (input.documents && Array.isArray(input.documents) && input.documents.length > 0) {
+        for (const doc of input.documents) {
+          if (doc.documentType && doc.documentNumber && doc.expiryDate) {
+            const docId = `doc_${doc.documentType.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            const expiryObj = new Date(doc.expiryDate);
+            const now = new Date();
+            await tx.insert(employeeDocuments).values({
+              id: docId,
+              tenantId,
+              employeeId,
+              documentTypeId: doc.documentTypeId || null,
+              documentType: doc.documentType,
+              documentNumber: doc.documentNumber.trim(),
+              issueDate: doc.issueDate ? new Date(doc.issueDate) : null,
+              expiryDate: expiryObj,
+              issuingAuthority: doc.issuingAuthority?.trim() || null,
+              issuingCountry: doc.issuingCountry?.trim() || null,
+              attachmentUrl: doc.attachmentUrl || null,
+              fileName: doc.fileName || null,
+              notes: doc.notes || null,
+              status: expiryObj < now ? 'EXPIRED' : expiryObj < new Date(now.getTime() + 60 * 86400000) ? 'EXPIRING_SOON' : 'VALID',
+              createdBy: input.actorEmail || input.actorId,
+            }).onConflictDoNothing();
+          }
+        }
       }
 
       // 10. Insert Emergency Contact if provided
@@ -1442,6 +1473,23 @@ export class PeopleRepository {
     }).returning();
 
     return inserted;
+  }
+
+  public async deleteEmployeeDocument(tenantId: string, employeeId: string, documentId: string, actorId = 'system') {
+    const [deleted] = await db.delete(employeeDocuments)
+      .where(and(
+        eq(employeeDocuments.id, documentId),
+        eq(employeeDocuments.employeeId, employeeId),
+        eq(employeeDocuments.tenantId, tenantId)
+      ))
+      .returning();
+
+    if (!deleted) {
+      throw new Error('Document not found or access denied');
+    }
+
+    logger.audit('DELETE', 'DOCUMENT', documentId, { employeeId, type: deleted.documentType }, { tenantId, actorId });
+    return deleted;
   }
 
   public async listExpiringDocuments(tenantId: string, daysAhead = 60) {

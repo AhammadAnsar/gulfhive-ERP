@@ -10,6 +10,8 @@ import { ToastProvider, LayoutProvider, AppShell, Button, Input, Select, useToas
 import { Money, SUPPORTED_CURRENCIES } from './core/domain/money.ts';
 import { GULFHIVE_MODULES } from './modules/module.manifest.ts';
 import { apiClient } from './lib/api-client.ts';
+import { AuthProvider, useAuth } from './core/security/AuthContext.tsx';
+import { LoginScreen } from './modules/auth/LoginScreen.tsx';
 import { FirstRunWizard } from './components/FirstRunWizard.tsx';
 import { CompanyManagement } from './components/CompanyManagement.tsx';
 import { PeopleModule } from './modules/people/PeopleModule.tsx';
@@ -31,7 +33,8 @@ import {
   CheckCircle2,
   XCircle,
   Download,
-  Archive
+  Archive,
+  RotateCw
 } from 'lucide-react';
 
 interface SetupStatus {
@@ -44,6 +47,7 @@ interface SetupStatus {
 function MainWorkspace() {
   const { t, language, toggleLanguage } = useI18n();
   const { addToast } = useToast();
+  const { user, isAuthenticated, isLoading: isAuthLoading, logout, setAuthSession } = useAuth();
 
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState<boolean>(true);
@@ -62,11 +66,6 @@ function MainWorkspace() {
       const data = await apiClient.get('/api/system/setup-status');
       if (data) {
         setSetupStatus(data);
-        if (data.activeTenant) {
-          setActiveCompany(data.activeTenant);
-          setSelectedCurrency(data.activeTenant.baseCurrency || 'KWD');
-          fetchCompanyBranches(data.activeTenant.id);
-        }
       }
     } catch (err) {
       console.error('Error querying setup status', err);
@@ -94,7 +93,35 @@ function MainWorkspace() {
     fetchSetupStatus();
   }, []);
 
-  const handleCompanyCreated = (newTenant: any) => {
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      const companyId = user.activeCompanyId || (user.authorizedCompanyIds && user.authorizedCompanyIds[0]) || setupStatus?.activeTenant?.id;
+      if (companyId) {
+        apiClient.get(`/api/companies/${companyId}`).then((res) => {
+          if (res?.company) {
+            setActiveCompany(res.company);
+            setSelectedCurrency(res.company.baseCurrency || 'KWD');
+            fetchCompanyBranches(companyId);
+          }
+        }).catch(() => {
+          if (setupStatus?.activeTenant) {
+            setActiveCompany(setupStatus.activeTenant);
+            setSelectedCurrency(setupStatus.activeTenant.baseCurrency || 'KWD');
+            fetchCompanyBranches(setupStatus.activeTenant.id);
+          }
+        });
+      }
+    } else {
+      setActiveCompany(null);
+      setCompanyBranches([]);
+      setActiveBranchId('');
+    }
+  }, [isAuthenticated, user?.activeCompanyId, user?.authorizedCompanyIds, setupStatus?.activeTenant?.id]);
+
+  const handleCompanyCreated = (newTenant: any, token?: string, userContext?: any) => {
+    if (token && userContext) {
+      setAuthSession(userContext, token);
+    }
     setActiveCompany(newTenant);
     setSelectedCurrency(newTenant.baseCurrency || 'KWD');
     setSetupStatus({
@@ -118,16 +145,17 @@ function MainWorkspace() {
     moneyError = err.message || 'Invalid amount';
   }
 
-  if (isLoadingStatus) {
+  // 1. BOOTSTRAPPING STATE
+  if (isLoadingStatus || isAuthLoading) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
-        <LoadingState label="Validating GulfHive System State..." />
+        <LoadingState label={language === 'ar' ? 'جاري التحقق من جلسة العمل وحالة النظام...' : 'Authenticating session & verifying system state...'} />
       </div>
     );
   }
 
-  // FIRST-RUN SETUP WIZARD (Strictly rendered when 0 companies exist)
-  if (setupStatus?.needsSetup || !activeCompany) {
+  // 2. FIRST-RUN SETUP WIZARD (Strictly rendered when 0 companies exist)
+  if (setupStatus?.needsSetup) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
         <header className="bg-slate-900 text-white border-b border-slate-800 py-3 px-6 flex items-center justify-between">
@@ -154,67 +182,63 @@ function MainWorkspace() {
     );
   }
 
+  // 3. UNAUTHENTICATED STATE -> Render Login Screen
+  if (!isAuthenticated) {
+    return <LoginScreen />;
+  }
+
+  // 4. AUTHENTICATED BUT COMPANY INITIALIZING
+  if (!activeCompany) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+        <LoadingState label={language === 'ar' ? 'جاري تهيئة سياق المنشأة المصرح بها...' : 'Establishing authorized company context...'} />
+      </div>
+    );
+  }
+
   const currentBranch = companyBranches.find((b) => b.id === activeBranchId) || companyBranches[0];
 
   const standardActions = (
-    <>
-      <Button
-        variant="primary"
-        size="sm"
-        leftIcon={<Plus className="w-3.5 h-3.5" />}
-        onClick={() => addToast({ type: 'info', title: t('action.new'), message: `Create record in ${activeModule}` })}
-      >
-        {t('action.new')}
-      </Button>
+    <div className="flex items-center gap-2">
       <Button
         variant="secondary"
         size="sm"
-        leftIcon={<Save className="w-3.5 h-3.5" />}
-        onClick={() => addToast({ type: 'success', title: t('action.save'), message: 'State verified' })}
+        leftIcon={<RotateCw className="w-3.5 h-3.5" />}
+        onClick={() => {
+          if (activeCompany?.id) {
+            fetchCompanyBranches(activeCompany.id);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('gulfhive:refresh'));
+          }
+          addToast({
+            type: 'info',
+            title: language === 'ar' ? 'تحديث البيانات' : 'Refresh Data',
+            message: language === 'ar' ? 'تمت مزامنة بيانات الشاشة الحالية' : 'Active screen records synchronized.',
+          });
+        }}
       >
-        {t('action.save')}
+        {language === 'ar' ? 'تحديث' : 'Refresh'}
       </Button>
-      <Button
-        variant="secondary"
-        size="sm"
-        leftIcon={<Edit2 className="w-3.5 h-3.5" />}
-        onClick={() => addToast({ type: 'info', title: t('action.edit'), message: 'Edit mode active' })}
-      >
-        {t('action.edit')}
-      </Button>
-      <Button
-        variant="success"
-        size="sm"
-        leftIcon={<CheckCircle2 className="w-3.5 h-3.5" />}
-        onClick={() => addToast({ type: 'success', title: t('action.approve'), message: 'Operation approved' })}
-      >
-        {t('action.approve')}
-      </Button>
-      <Button
-        variant="danger"
-        size="sm"
-        leftIcon={<XCircle className="w-3.5 h-3.5" />}
-        onClick={() => addToast({ type: 'error', title: t('action.reject'), message: 'Operation rejected' })}
-      >
-        {t('action.reject')}
-      </Button>
+
       <Button
         variant="secondary"
         size="sm"
         leftIcon={<Download className="w-3.5 h-3.5" />}
-        onClick={() => addToast({ type: 'info', title: t('action.export'), message: 'Export generated' })}
+        onClick={() => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('gulfhive:export', { detail: { module: activeModule } }));
+          }
+          addToast({
+            type: 'info',
+            title: t('action.export'),
+            message: language === 'ar' ? `جاري تصدير بيانات ${t('nav.' + activeModule)}...` : `Exporting ${activeModule} dataset...`,
+          });
+        }}
       >
         {t('action.export')}
       </Button>
-      <Button
-        variant="secondary"
-        size="sm"
-        leftIcon={<Archive className="w-3.5 h-3.5" />}
-        onClick={() => addToast({ type: 'info', title: t('action.archive'), message: 'Record archived' })}
-      >
-        {t('action.archive')}
-      </Button>
-    </>
+    </div>
   );
 
   return (
@@ -231,6 +255,12 @@ function MainWorkspace() {
         { label: t(`nav.${activeModule}`), isCurrent: true },
       ]}
       actions={standardActions}
+      currentUser={{
+        displayName: user?.displayName || 'Administrator',
+        email: user?.email || 'admin@gulfhive.internal',
+        role: user?.roles?.[0] || 'COMPANY_ADMIN',
+      }}
+      onLogout={logout}
     >
       {activeModule === 'dashboard' ? (
         <DashboardModule
@@ -312,7 +342,9 @@ export default function App() {
     <I18nProvider>
       <ToastProvider>
         <LayoutProvider>
-          <MainWorkspace />
+          <AuthProvider>
+            <MainWorkspace />
+          </AuthProvider>
         </LayoutProvider>
       </ToastProvider>
     </I18nProvider>

@@ -3,10 +3,12 @@
  * Atomic transactional operations for companies, branches, roles, user assignments, and audit logs.
  */
 
+import crypto from 'crypto';
 import { eq, desc, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.ts';
-import { tenants, branches, users, userTenants, roles, permissions, rolePermissions, auditLogs, documentSequences } from '../../../db/schema.ts';
+import { tenants, branches, users, userTenants, userSessions, roles, permissions, rolePermissions, auditLogs, documentSequences } from '../../../db/schema.ts';
 import { logger } from '../../../core/logging/logger.ts';
+import { authRepository } from './auth.repository.ts';
 
 export interface CreateCompanyInput {
   code: string;
@@ -40,6 +42,7 @@ export interface CreateCompanyInput {
   adminUid: string;
   adminEmail: string;
   adminDisplayName?: string;
+  adminPassword?: string;
 }
 
 export interface CreateBranchInput {
@@ -81,6 +84,61 @@ export class CompanyRepository {
       ...comp[0],
       branches: compBranches,
     };
+  }
+
+  public async updateCompany(
+    id: string,
+    input: {
+      legalNameEn?: string;
+      legalNameAr?: string;
+      tradeNameEn?: string;
+      tradeNameAr?: string;
+      logoUrl?: string;
+      crNumber?: string;
+      taxNumber?: string;
+      fiscalYearStartMonth?: number;
+      timezone?: string;
+      phone?: string;
+      email?: string;
+      website?: string;
+      addressEn?: string;
+      addressAr?: string;
+      actorId?: string;
+      actorEmail?: string;
+    }
+  ) {
+    const existing = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
+    if (existing.length === 0) {
+      throw new Error(`Company with id '${id}' not found.`);
+    }
+
+    const updateData: Record<string, any> = {
+      updatedAt: new Date(),
+    };
+
+    if (input.legalNameEn !== undefined) updateData.legalNameEn = input.legalNameEn.trim();
+    if (input.legalNameAr !== undefined) updateData.legalNameAr = input.legalNameAr.trim();
+    if (input.tradeNameEn !== undefined) updateData.tradeNameEn = input.tradeNameEn?.trim() || null;
+    if (input.tradeNameAr !== undefined) updateData.tradeNameAr = input.tradeNameAr?.trim() || null;
+    if (input.logoUrl !== undefined) updateData.logoUrl = input.logoUrl || null;
+    if (input.crNumber !== undefined) updateData.crNumber = input.crNumber?.trim() || null;
+    if (input.taxNumber !== undefined) updateData.taxNumber = input.taxNumber?.trim() || null;
+    if (input.fiscalYearStartMonth !== undefined) updateData.fiscalYearStartMonth = Number(input.fiscalYearStartMonth) || 1;
+    if (input.timezone !== undefined) updateData.timezone = input.timezone;
+    if (input.phone !== undefined) updateData.phone = input.phone?.trim() || null;
+    if (input.email !== undefined) updateData.email = input.email?.trim() || null;
+    if (input.website !== undefined) updateData.website = input.website?.trim() || null;
+    if (input.addressEn !== undefined) updateData.addressEn = input.addressEn?.trim() || null;
+    if (input.addressAr !== undefined) updateData.addressAr = input.addressAr?.trim() || null;
+
+    const [updated] = await db
+      .update(tenants)
+      .set(updateData)
+      .where(eq(tenants.id, id))
+      .returning();
+
+    logger.audit('UPDATE', 'COMPANY', id, { updatedFields: Object.keys(updateData) }, { tenantId: id, actorId: input.actorId });
+    return updated;
   }
 
   public async createCompanyWithMainBranchAndAdmin(input: CreateCompanyInput) {
@@ -154,13 +212,15 @@ export class CompanyRepository {
 
       const branch = insertedBranches[0];
 
-      // 4. Ensure Admin User exists in users table
+      // 4. Ensure Admin User exists in users table with secure password if provided
+      const passwordHash = input.adminPassword ? authRepository.hashPassword(input.adminPassword) : null;
       const upsertedUsers = await tx.insert(users).values({
         uid: input.adminUid,
         email: input.adminEmail.toLowerCase().trim(),
         displayName: input.adminDisplayName || 'System Administrator',
         role: 'COMPANY_ADMIN',
         tenantId: tenant.id,
+        passwordHash,
       }).onConflictDoUpdate({
         target: users.uid,
         set: {
@@ -168,6 +228,7 @@ export class CompanyRepository {
           displayName: input.adminDisplayName || undefined,
           role: 'COMPANY_ADMIN',
           tenantId: tenant.id,
+          passwordHash: passwordHash || undefined,
           updatedAt: new Date(),
         },
       }).returning();
@@ -225,7 +286,24 @@ export class CompanyRepository {
         }).onConflictDoNothing();
       }
 
-      // 7. Record immutable Audit Log
+      // 7. Generate established cryptographic session token for immediate dashboard authorization
+      const tokenSecret = crypto.randomBytes(32).toString('hex');
+      const sessionId = `sess_${user.id}_${Date.now()}`;
+      const tokenHash = crypto.createHash('sha256').update(tokenSecret).digest('hex');
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      await tx.insert(userSessions).values({
+        id: sessionId,
+        userId: user.id,
+        tokenHash,
+        deviceInfo: 'First-Run Establishment Session',
+        ipAddress: '127.0.0.1',
+        expiresAt,
+      });
+
+      const token = `${sessionId}:${tokenSecret}`;
+
+      // 8. Record immutable Audit Log
       await tx.insert(auditLogs).values({
         tenantId: tenant.id,
         actorId: input.adminUid,
@@ -250,6 +328,7 @@ export class CompanyRepository {
         tenant,
         branch,
         user,
+        token,
       };
     });
   }

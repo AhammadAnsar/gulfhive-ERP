@@ -15,7 +15,9 @@ import {
   Filter,
   CreditCard,
   Printer,
-  Trash2
+  Trash2,
+  Edit2,
+  User
 } from 'lucide-react';
 import {
   Button,
@@ -31,6 +33,7 @@ import {
 } from '../../design-system/index.ts';
 import { EmployeeDetailDrawer } from './components/EmployeeDetailDrawer.tsx';
 import { NewEmployeeDialog } from './components/NewEmployeeDialog.tsx';
+import { EmployeeEditModal } from './components/EmployeeEditModal.tsx';
 
 export interface PeopleModuleProps {
   company: any;
@@ -70,6 +73,7 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
 
   // Modals
   const [showNewEmpDialog, setShowNewEmpDialog] = useState(false);
+  const [empToEdit, setEmpToEdit] = useState<any | null>(null);
   const [showNewDeptDialog, setShowNewDeptDialog] = useState(false);
   const [showNewDesigDialog, setShowNewDesigDialog] = useState(false);
 
@@ -316,17 +320,32 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
       key: 'name',
       header: 'Employee Name',
       sortable: true,
-      width: '24%',
-      render: (e) => (
-        <div>
-          <span className="font-semibold text-slate-900 block">
-            {language === 'ar' ? `${e.firstNameAr} ${e.lastNameAr}` : `${e.firstNameEn} ${e.lastNameEn}`}
-          </span>
-          <span className="text-[11px] text-slate-400 block font-mono">
-            {e.email}
-          </span>
-        </div>
-      ),
+      width: '28%',
+      render: (e) => {
+        const photo = e.avatarUrl || e.photoPath;
+        return (
+          <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
+            <div className="w-8 h-8 rounded-md bg-slate-800 text-white font-bold text-xs flex items-center justify-center shrink-0 overflow-hidden border border-slate-200 shadow-2xs">
+              {photo ? (
+                <img src={photo} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <span>
+                  {e.firstNameEn?.slice(0, 1)}
+                  {e.lastNameEn?.slice(0, 1)}
+                </span>
+              )}
+            </div>
+            <div className="min-w-0">
+              <span className="font-semibold text-slate-900 block truncate">
+                {language === 'ar' ? `${e.firstNameAr} ${e.lastNameAr}` : `${e.firstNameEn} ${e.lastNameEn}`}
+              </span>
+              <span className="text-[11px] text-slate-400 block font-mono truncate">
+                {e.email}
+              </span>
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: 'designation',
@@ -380,6 +399,17 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
         <div className="flex items-center justify-end space-x-1.5 rtl:space-x-reverse">
           <Button size="sm" variant="secondary" onClick={() => handleOpenDetail(e.id)}>
             {t('action.view')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              setEmpToEdit(e);
+            }}
+            title={language === 'ar' ? 'تعديل بيانات الموظف' : 'Edit Employee'}
+          >
+            <Edit2 className="w-3.5 h-3.5 text-slate-600" />
           </Button>
           <Button
             size="sm"
@@ -671,12 +701,34 @@ export function PeopleModule({ company, branches, activeBranchId }: PeopleModule
         onClose={() => setIsDetailOpen(false)}
         employee={selectedEmployee}
         company={company}
+        branches={branches}
+        departments={departmentsList}
+        designations={designationsList}
         onRefresh={() => {
           loadAllData();
           if (selectedEmployee) handleOpenDetail(selectedEmployee.id);
         }}
         onDelete={(emp) => setEmpToDelete(emp)}
       />
+
+      {/* Edit Employee Modal */}
+      {empToEdit && (
+        <EmployeeEditModal
+          isOpen={!!empToEdit}
+          onClose={() => setEmpToEdit(null)}
+          employee={empToEdit}
+          company={company}
+          branches={branches}
+          departments={departmentsList}
+          designations={designationsList}
+          onEmployeeUpdated={() => {
+            loadAllData();
+            if (selectedEmployee && selectedEmployee.id === empToEdit.id) {
+              handleOpenDetail(empToEdit.id);
+            }
+          }}
+        />
+      )}
 
       {/* New Employee Wizard Dialog */}
       <NewEmployeeDialog

@@ -1,6 +1,6 @@
 /**
  * GulfHive ERP - Employee ID Card Generator Component
- * Clean enterprise corporate credential with dual English / Arabic typography, barcode, and print optimization.
+ * Clean enterprise corporate credential with dual English / Arabic typography, photo, company logo, barcode, and print optimization.
  */
 
 import React from 'react';
@@ -20,6 +20,8 @@ export function EmployeeIdCard({ employee, company, onClose }: EmployeeIdCardPro
   const handlePrint = () => {
     window.print();
   };
+
+  const photo = employee.avatarUrl || employee.photoPath;
 
   return (
     <div className="space-y-6">
@@ -45,16 +47,22 @@ export function EmployeeIdCard({ employee, company, onClose }: EmployeeIdCardPro
       <div className="flex justify-center p-4">
         <div
           id="printable-id-card"
-          className="w-80 h-[480px] bg-white rounded-xl border border-slate-300 shadow-md flex flex-col justify-between overflow-hidden relative select-none font-sans"
+          className="w-80 h-[490px] bg-white rounded-xl border border-slate-300 shadow-md flex flex-col justify-between overflow-hidden relative select-none font-sans"
         >
-          {/* Top Brand Banner */}
+          {/* Top Brand Banner with Company Logo */}
           <div className="bg-slate-900 text-white p-4 flex items-center justify-between border-b-2 border-amber-500">
             <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
-              <div className="w-7 h-7 rounded bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-xs shadow-2xs">
-                GH
-              </div>
-              <div className="leading-tight">
-                <span className="font-bold text-xs tracking-tight block">
+              {company?.logoUrl ? (
+                <div className="w-8 h-8 rounded bg-white p-1 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                  <img src={company.logoUrl} alt="Company Logo" className="max-w-full max-h-full object-contain" />
+                </div>
+              ) : (
+                <div className="w-8 h-8 rounded bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-xs shadow-2xs shrink-0">
+                  {company?.code?.slice(0, 2) || 'GH'}
+                </div>
+              )}
+              <div className="leading-tight min-w-0">
+                <span className="font-bold text-xs tracking-tight block truncate">
                   {language === 'ar' ? company?.legalNameAr : company?.legalNameEn || 'GulfHive Enterprise'}
                 </span>
                 <span className="text-[10px] text-slate-300 font-mono block">
@@ -62,15 +70,15 @@ export function EmployeeIdCard({ employee, company, onClose }: EmployeeIdCardPro
                 </span>
               </div>
             </div>
-            <Shield className="w-4 h-4 text-amber-400 opacity-80" />
+            <Shield className="w-4 h-4 text-amber-400 opacity-80 shrink-0" />
           </div>
 
           {/* Photo & Identity Section */}
           <div className="flex-1 px-5 py-4 flex flex-col items-center text-center">
             {/* Avatar / Photo Box */}
-            <div className="w-24 h-24 rounded-lg bg-slate-100 border-2 border-slate-200 flex items-center justify-center text-slate-700 font-bold text-2xl shadow-inner mb-3 overflow-hidden">
-              {employee.avatarUrl ? (
-                <img src={employee.avatarUrl} alt="Employee" className="w-full h-full object-cover" />
+            <div className="w-24 h-24 rounded-lg bg-slate-100 border-2 border-slate-300 flex items-center justify-center text-slate-700 font-bold text-2xl shadow-inner mb-3 overflow-hidden">
+              {photo ? (
+                <img src={photo} alt="Employee Photo" className="w-full h-full object-cover" />
               ) : (
                 <span>
                   {employee.firstNameEn?.slice(0, 1)}
@@ -138,9 +146,9 @@ export function EmployeeIdCard({ employee, company, onClose }: EmployeeIdCardPro
             <div className="text-right rtl:text-left text-[9px] font-mono text-slate-500">
               <div className="flex items-center space-x-1 rtl:space-x-reverse justify-end">
                 <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                <span className="font-semibold text-emerald-800">AUTHORIZED</span>
+                <span className="font-semibold text-emerald-700">ACTIVE</span>
               </div>
-              <span>ISSUED BY GULFHIVE</span>
+              <span>GulfHive ID Security</span>
             </div>
           </div>
         </div>
