@@ -125,7 +125,6 @@ async function startServer() {
     EnvironmentValidator.assertValidOrExit();
     const migrationRunner = new MigrationRunner();
     await migrationRunner.runAllMigrations();
-    await ensureDefaultAdmin();
   } catch (mErr: any) {
     logger.error('[FATAL] Database migration failed! Halting application startup to prevent corrupt operations with incomplete schema.', {
       error: mErr.message,

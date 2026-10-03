@@ -51,6 +51,7 @@ function MainWorkspace() {
 
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState<boolean>(true);
+  const [isManualSetup, setIsManualSetup] = useState<boolean>(false);
   const [activeModule, setActiveModule] = useState<string>('dashboard');
   const [activeCompany, setActiveCompany] = useState<any | null>(null);
   const [activeBranchId, setActiveBranchId] = useState<string>('');
@@ -154,8 +155,8 @@ function MainWorkspace() {
     );
   }
 
-  // 2. FIRST-RUN SETUP WIZARD (Strictly rendered when 0 companies exist)
-  if (setupStatus?.needsSetup) {
+  // 2. FIRST-RUN SETUP WIZARD (Rendered when 0 companies exist OR manual onboarding requested)
+  if (setupStatus?.needsSetup || isManualSetup) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
         <header className="bg-slate-900 text-white border-b border-slate-800 py-3 px-6 flex items-center justify-between">
@@ -176,7 +177,13 @@ function MainWorkspace() {
         </header>
 
         <main className="flex-1 py-8">
-          <FirstRunWizard onCompanyCreated={handleCompanyCreated} />
+          <FirstRunWizard
+            onCompanyCreated={(tenant, token, userContext) => {
+              setIsManualSetup(false);
+              handleCompanyCreated(tenant, token, userContext);
+            }}
+            onCancel={!setupStatus?.needsSetup ? () => setIsManualSetup(false) : undefined}
+          />
         </main>
       </div>
     );
@@ -184,7 +191,7 @@ function MainWorkspace() {
 
   // 3. UNAUTHENTICATED STATE -> Render Login Screen
   if (!isAuthenticated) {
-    return <LoginScreen />;
+    return <LoginScreen onNavigateToSetup={() => setIsManualSetup(true)} />;
   }
 
   // 4. AUTHENTICATED BUT COMPANY INITIALIZING

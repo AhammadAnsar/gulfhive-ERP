@@ -22,6 +22,13 @@ import {
   auditLogs,
 } from '../../../db/schema.ts';
 import { logger } from '../../../core/logging/logger.ts';
+import {
+  ValidationError,
+  NotFoundError,
+  ConflictError,
+  DomainError,
+  UnauthenticatedError,
+} from '../../../core/errors/app-error.ts';
 
 export interface UserInput {
   username?: string;
@@ -483,18 +490,36 @@ export class AuthRepository {
         createdAt: users.createdAt,
       })
       .from(users)
-      .where(sql`${users.tenantId} IS NULL OR ${users.tenantId} = ${tenantId}`)
+      .where(
+        sql`${users.tenantId} = ${tenantId} OR ${users.id} IN (
+          SELECT user_id FROM user_company_access WHERE company_id = ${tenantId} AND status = 'ACTIVE'
+        ) OR ${users.id} IN (
+          SELECT user_id FROM user_tenants WHERE tenant_id = ${tenantId} AND is_active = true
+        )`
+      )
       .orderBy(asc(users.id));
 
-    // Attach role codes to users
+    // Attach role codes to users with deduplication
     for (const u of list) {
       const uRoles = await db
-        .select({ roleCode: roles.code, roleNameEn: roles.nameEn, roleNameAr: roles.nameAr })
+        .select({ roleId: roles.id, roleCode: roles.code, roleNameEn: roles.nameEn, roleNameAr: roles.nameAr })
         .from(userRoles)
         .innerJoin(roles, eq(userRoles.roleId, roles.id))
-        .where(eq(userRoles.userId, u.id));
+        .where(
+          and(
+            eq(userRoles.userId, u.id),
+            sql`${userRoles.tenantId} IS NULL OR ${userRoles.tenantId} = ${tenantId}`
+          )
+        );
 
-      (u as any).assignedRoles = uRoles;
+      const uniqueRolesMap = new Map<string, typeof uRoles[0]>();
+      uRoles.forEach((r) => {
+        if (!uniqueRolesMap.has(r.roleCode)) {
+          uniqueRolesMap.set(r.roleCode, r);
+        }
+      });
+
+      (u as any).assignedRoles = Array.from(uniqueRolesMap.values());
     }
 
     return list;
@@ -526,10 +551,17 @@ export class AuthRepository {
     if (!u) return null;
 
     const uRoles = await db
-      .select({ roleId: roles.id, roleCode: roles.code, roleNameEn: roles.nameEn })
+      .select({ roleId: roles.id, roleCode: roles.code, roleNameEn: roles.nameEn, roleNameAr: roles.nameAr })
       .from(userRoles)
       .innerJoin(roles, eq(userRoles.roleId, roles.id))
       .where(eq(userRoles.userId, u.id));
+
+    const uniqueRolesMap = new Map<string, typeof uRoles[0]>();
+    uRoles.forEach((r) => {
+      if (!uniqueRolesMap.has(r.roleCode)) {
+        uniqueRolesMap.set(r.roleCode, r);
+      }
+    });
 
     const companyAccess = await db
       .select({ companyId: userCompanyAccess.companyId, companyNameEn: tenants.legalNameEn })
@@ -545,7 +577,7 @@ export class AuthRepository {
 
     return {
       ...u,
-      assignedRoles: uRoles,
+      assignedRoles: Array.from(uniqueRolesMap.values()),
       companyAccess,
       branchAccess,
     };
@@ -639,9 +671,15 @@ export class AuthRepository {
         .select()
         .from(roles)
         .where(sql`${roles.code} IN ('COMPANY_ADMIN', 'SUPER_ADMIN')`);
-      const adminRoleIds = new Set(
-        adminRoleRecords.map((r) => r.id).concat(['role_company_admin', 'role_super_admin'])
-      );
+      const adminRoleIds = new Set<string>();
+      adminRoleRecords.forEach((r) => {
+        adminRoleIds.add(r.id);
+        adminRoleIds.add(r.code);
+      });
+      adminRoleIds.add('role_company_admin');
+      adminRoleIds.add('COMPANY_ADMIN');
+      adminRoleIds.add('role_super_admin');
+      adminRoleIds.add('SUPER_ADMIN');
 
       const hasExistingAdminRole =
         existing.role === 'COMPANY_ADMIN' ||
@@ -734,16 +772,16 @@ export class AuthRepository {
       .limit(1);
 
     if (matchedUsers.length === 0) {
-      throw new Error('User account not found with provided identifier');
+      throw new NotFoundError('User account', usernameOrEmail);
     }
 
     const u = matchedUsers[0];
     if (u.passwordHash && !u.mustChangePassword) {
-      throw new Error('Account password already established. Please sign in or contact administrator.');
+      throw new ConflictError('Account password already established. Please sign in or contact administrator.');
     }
 
     if (!newPassword || newPassword.length < 8) {
-      throw new Error('Password must be at least 8 characters long.');
+      throw new ValidationError('Password must be at least 8 characters long.');
     }
 
     const passwordHash = this.hashPassword(newPassword);

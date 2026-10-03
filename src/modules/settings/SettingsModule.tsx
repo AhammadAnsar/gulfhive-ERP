@@ -774,26 +774,32 @@ export function SettingsModule({ company, branches, activeBranchId, onCompanyUpd
                 {
                   key: 'roles',
                   header: 'Assigned Roles',
-                  render: (row: any) => (
-                    <div className="flex flex-wrap gap-1">
-                      {row.assignedRoles && row.assignedRoles.length > 0 ? (
-                        row.assignedRoles.map((r: any, idx: number) => (
-                          <span
-                            key={idx}
-                            className={`px-1.5 py-0.5 text-[10px] font-mono font-bold rounded ${
-                              r.roleCode === 'COMPANY_ADMIN'
-                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                                : 'bg-slate-100 text-slate-700 border border-slate-200'
-                            }`}
-                          >
-                            {language === 'ar' ? r.roleNameAr : r.roleNameEn}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-[11px] font-mono text-slate-400">Viewer</span>
-                      )}
-                    </div>
-                  ),
+                  render: (row: any) => {
+                    const uniqueRoles = (row.assignedRoles || []).filter(
+                      (r: any, idx: number, arr: any[]) =>
+                        idx === arr.findIndex((item: any) => (item.roleCode || item.roleId) === (r.roleCode || r.roleId))
+                    );
+                    return (
+                      <div className="flex flex-wrap gap-1">
+                        {uniqueRoles.length > 0 ? (
+                          uniqueRoles.map((r: any, idx: number) => (
+                            <span
+                              key={idx}
+                              className={`px-1.5 py-0.5 text-[10px] font-mono font-bold rounded ${
+                                r.roleCode === 'SUPER_ADMIN' || r.roleCode === 'COMPANY_ADMIN'
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+                              }`}
+                            >
+                              {language === 'ar' ? (r.roleNameAr || r.roleCode) : (r.roleNameEn || r.roleCode)}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[11px] font-mono text-slate-400">Viewer</span>
+                        )}
+                      </div>
+                    );
+                  },
                 },
                 {
                   key: 'status',

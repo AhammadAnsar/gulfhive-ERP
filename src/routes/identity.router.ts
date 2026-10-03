@@ -44,8 +44,8 @@ identityRouter.post('/auth/establish-password', async (req: Request, res: Respon
     const userAgent = req.headers['user-agent'] || 'Browser';
     const result = await authRepository.establishInitialPassword(usernameOrEmail, password, ipAddress, userAgent);
     res.json(result);
-  } catch (error) {
-    logger.warn('Password establishment failed:', (error as any)?.message);
+  } catch (error: any) {
+    logger.warn(`Password establishment failed: ${error?.message}`);
     next(error);
   }
 });

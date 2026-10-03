@@ -1,7 +1,7 @@
 /**
- * GulfHive ERP - First-Run Company Setup Wizard
- * Step-by-step guided onboarding to establish parent legal entity, headquarters branch, and administrator account.
- * Uses GulfHive Design System: FormField, Input, Select, Button, Toast.
+ * GulfHive ERP - First-Run Institution & Company Setup Wizard
+ * Professional step-by-step onboarding to establish parent legal entity, headquarters campus/branch, and Super Administrator account.
+ * Clean, production-ready form with zero hardcoded dummy data.
  */
 
 import React, { useState } from 'react';
@@ -17,27 +17,34 @@ import {
   ArrowRight,
   ArrowLeft,
   ShieldCheck,
-  AlertCircle
+  AlertCircle,
+  Eye,
+  EyeOff,
+  Sparkles,
+  Lock
 } from 'lucide-react';
 import { Button, Input, Select, FormField, useToast } from '../design-system/index.ts';
 import { apiClient } from '../lib/api-client.ts';
 
 interface FirstRunWizardProps {
   onCompanyCreated: (tenant: any, token?: string, user?: any) => void;
+  onCancel?: () => void;
 }
 
-export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
+export function FirstRunWizard({ onCompanyCreated, onCancel }: FirstRunWizardProps) {
   const { t, language, direction } = useI18n();
   const { addToast } = useToast();
 
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
 
-  // Form State
+  // Form State - strictly clean without hardcoded fake data
   const [formData, setFormData] = useState({
-    // Step 1: Legal Entity
-    code: 'CORP-01',
+    // Step 1: Legal Entity & Jurisdiction
+    code: '',
     legalNameEn: '',
     legalNameAr: '',
     tradeNameEn: '',
@@ -47,10 +54,10 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
     crNumber: '',
     taxNumber: '',
 
-    // Step 2: Head Office & Main Branch
+    // Step 2: Head Office & Main Branch / Campus
     branchCode: 'HQ',
-    branchNameEn: 'Head Office',
-    branchNameAr: 'المقر الرئيسي',
+    branchNameEn: '',
+    branchNameAr: '',
     cityEn: 'Kuwait City',
     cityAr: 'مدينة الكويت',
     branchAddressEn: '',
@@ -66,12 +73,14 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
     addressEn: '',
     addressAr: '',
 
-    // Step 4: Administrator Profile
-    adminDisplayName: 'Master Administrator',
-    adminEmail: 'admin@gulfhive.internal',
+    // Step 4: Primary Super Admin Account
+    adminDisplayName: '',
+    adminEmail: '',
+    adminUsername: '',
+    adminPhone: '',
     adminPassword: '',
     adminPasswordConfirm: '',
-    adminUid: `admin_${Date.now()}`,
+    adminUid: '',
   });
 
   const updateField = (field: string, value: any) => {
@@ -104,6 +113,15 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
           }
         }
       }
+
+      if (field === 'adminEmail' && !prev.adminUsername) {
+        // Auto-suggest clean username from email if not explicitly set
+        const suggested = String(value).split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '');
+        if (suggested) {
+          updated.adminUsername = suggested;
+        }
+      }
+
       return updated;
     });
   };
@@ -112,7 +130,7 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
     setErrorMessage(null);
     if (step === 1) {
       if (!formData.code.trim()) {
-        setErrorMessage(language === 'ar' ? 'يرجى إدخال رمز المنشأة' : 'Company code is required');
+        setErrorMessage(language === 'ar' ? 'يرجى إدخال رمز المنشأة / المؤسسة' : 'Organization / Company code is required');
         return false;
       }
       if (!formData.legalNameEn.trim()) {
@@ -120,25 +138,33 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
         return false;
       }
       if (!formData.legalNameAr.trim()) {
-        setErrorMessage(language === 'ar' ? 'الاسم النظامي بالعربية مطلوب' : 'Arabic legal name is required');
+        setErrorMessage(language === 'ar' ? 'الاسم النظامي بالعربية مطلوب' : 'Arabic / Native legal name is required');
         return false;
       }
     } else if (step === 2) {
       if (!formData.branchCode.trim()) {
-        setErrorMessage(language === 'ar' ? 'رمز الفرع الرئيسي مطلوب' : 'Branch code is required');
+        setErrorMessage(language === 'ar' ? 'رمز الفرع / المقر الرئيسي مطلوب' : 'Main branch / Campus code is required');
         return false;
       }
       if (!formData.branchNameEn.trim() || !formData.branchNameAr.trim()) {
-        setErrorMessage(language === 'ar' ? 'يرجى إدخال اسم الفرع باللغتين' : 'Branch name in English and Arabic is required');
+        setErrorMessage(language === 'ar' ? 'يرجى إدخال اسم الفرع الرئيسي باللغتين' : 'Main branch name in English and Arabic is required');
         return false;
       }
     } else if (step === 4) {
-      if (!formData.adminEmail.trim()) {
-        setErrorMessage(language === 'ar' ? 'البريد الإلكتروني لمدير المنشأة مطلوب' : 'Administrator email is required');
+      if (!formData.adminDisplayName.trim()) {
+        setErrorMessage(language === 'ar' ? 'يرجى إدخال الاسم الكامل للمسؤول الرئيسي' : 'Super Admin Full Name is required');
+        return false;
+      }
+      if (!formData.adminEmail.trim() || !formData.adminEmail.includes('@')) {
+        setErrorMessage(language === 'ar' ? 'البريد الإلكتروني للمسؤول مطلوب وصحيح' : 'Valid Administrator email is required');
+        return false;
+      }
+      if (!formData.adminUsername.trim()) {
+        setErrorMessage(language === 'ar' ? 'اسم المستخدم للمسؤول مطلوب' : 'Administrator username is required');
         return false;
       }
       if (!formData.adminPassword || formData.adminPassword.length < 8) {
-        setErrorMessage(language === 'ar' ? 'كلمة المرور يجب أن لا تقل عن 8 خانات' : 'Administrator password must be at least 8 characters');
+        setErrorMessage(language === 'ar' ? 'كلمة المرور يجب أن لا تقل عن 8 خانات' : 'Super Admin password must be at least 8 characters');
         return false;
       }
       if (formData.adminPassword !== formData.adminPasswordConfirm) {
@@ -168,16 +194,25 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
     setIsSubmitting(true);
     setErrorMessage(null);
 
+    const generatedUid = formData.adminUid || `admin_${Date.now()}`;
+
     try {
-      const data = await apiClient.post<any>('/api/setup/company', formData);
+      const payload = {
+        ...formData,
+        adminUid: generatedUid,
+        adminUsername: formData.adminUsername.trim().toLowerCase(),
+        adminEmail: formData.adminEmail.trim().toLowerCase(),
+      };
+
+      const data = await apiClient.post<any>('/api/setup/company', payload);
 
       if (!data?.tenant) {
-        throw new Error('Establishment completed but tenant metadata was not returned by server.');
+        throw new Error('Setup completed but tenant metadata was not returned by server.');
       }
 
       addToast({
         type: 'success',
-        title: language === 'ar' ? 'تم تأسيس المنشأة بنجاح' : 'Enterprise Established',
+        title: language === 'ar' ? 'تم تأسيس المنشأة والحساب بنجاح' : 'Enterprise & Super Admin Established',
         message: `${data.tenant.code} - ${language === 'ar' ? data.tenant.legalNameAr : data.tenant.legalNameEn}`,
       });
 
@@ -194,10 +229,10 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
   };
 
   const steps = [
-    { num: 1, title: language === 'ar' ? 'المنشأة' : 'Company', icon: Building2 },
+    { num: 1, title: language === 'ar' ? 'المنشأة' : 'Institution', icon: Building2 },
     { num: 2, title: language === 'ar' ? 'الفروع' : 'Location', icon: MapPin },
     { num: 3, title: language === 'ar' ? 'المالية' : 'Finance', icon: Calendar },
-    { num: 4, title: language === 'ar' ? 'المسؤول' : 'Admin', icon: UserCheck },
+    { num: 4, title: language === 'ar' ? 'المسؤول' : 'Super Admin', icon: UserCheck },
     { num: 5, title: language === 'ar' ? 'المراجعة' : 'Review', icon: ShieldCheck },
   ];
 
@@ -205,20 +240,36 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
   const NextIcon = direction === 'rtl' ? ArrowLeft : ArrowRight;
 
   return (
-    <div className="max-w-4xl w-full mx-auto py-4 px-4 overflow-x-hidden">
+    <div className="max-w-4xl w-full mx-auto py-4 px-4 overflow-x-hidden select-none">
       {/* Wizard Header Banner */}
       <div className="bg-slate-900 text-white rounded-t-xl p-6 border-b border-slate-800">
-        <div className="flex items-center space-x-3 rtl:space-x-reverse mb-2">
-          <div className="w-8 h-8 rounded bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-xs shadow-2xs">
-            GH
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-3 rtl:space-x-reverse">
+            <div className="w-9 h-9 rounded bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-sm shadow-md font-mono">
+              GH
+            </div>
+            <div>
+              <h1 className="text-lg font-bold tracking-tight text-white">
+                {language === 'ar' ? 'معالج إعداد وتأسيس المنشأة الجديد' : 'Institution Onboarding & Setup Wizard'}
+              </h1>
+              <p className="text-xs text-slate-300">
+                {language === 'ar'
+                  ? 'تهيئة المنشأة والمقر الرئيسي وتأسيس حساب المسؤول العام (Super Admin)'
+                  : 'Configure institution details, headquarters, and create the primary Super Administrator.'}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-bold tracking-tight text-white">{t('wizard.title')}</h1>
-            <p className="text-xs text-slate-300">{t('wizard.subtitle')}</p>
-          </div>
+          {onCancel && (
+            <button
+              onClick={onCancel}
+              className="text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded border border-slate-700 bg-slate-800 transition cursor-pointer"
+            >
+              {language === 'ar' ? 'إلغاء' : 'Back to Login'}
+            </button>
+          )}
         </div>
 
-        {/* Wizard Stepper Bar - Responsively balanced & natural wrapping without truncation */}
+        {/* Stepper Bar */}
         <div className="mt-6 grid grid-cols-5 gap-2 text-xs">
           {steps.map((s) => {
             const Icon = s.icon;
@@ -248,11 +299,11 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
       </div>
 
       {/* Wizard Card Body */}
-      <div className="bg-white rounded-b-xl border border-slate-200 border-t-0 p-8 shadow-2xs">
+      <div className="bg-white rounded-b-xl border border-slate-200 border-t-0 p-8 shadow-sm">
         {errorMessage && (
-          <div className="mb-6 p-3 rounded bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center space-x-2 rtl:space-x-reverse">
+          <div className="mb-6 p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center space-x-2 rtl:space-x-reverse">
             <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{errorMessage}</span>
+            <span className="font-medium">{errorMessage}</span>
           </div>
         )}
 
@@ -265,12 +316,12 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label={t('field.company_code')} hint={t('field.company_code_hint')} required>
+              <FormField label={t('field.company_code')} hint="Unique uppercase identifier (e.g. CORP-01, SCH-01)" required>
                 <Input
                   type="text"
                   value={formData.code}
                   onChange={(e) => updateField('code', e.target.value.toUpperCase())}
-                  placeholder="CORP-01"
+                  placeholder="e.g. CORP-01"
                   className="font-mono uppercase"
                   required
                 />
@@ -305,8 +356,6 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   value={formData.legalNameAr}
                   onChange={(e) => updateField('legalNameAr', e.target.value)}
                   placeholder="مثال: شركة الأمين للمشاريع ذ.م.م"
-                  dir="rtl"
-                  className="font-arabic text-right"
                   required
                 />
               </FormField>
@@ -326,8 +375,6 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   value={formData.tradeNameAr}
                   onChange={(e) => updateField('tradeNameAr', e.target.value)}
                   placeholder="مثال: مجموعة الأمين"
-                  dir="rtl"
-                  className="font-arabic text-right"
                 />
               </FormField>
 
@@ -336,7 +383,7 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   type="text"
                   value={formData.crNumber}
                   onChange={(e) => updateField('crNumber', e.target.value)}
-                  placeholder="e.g. 1010345678"
+                  placeholder="CR-1234567"
                   className="font-mono"
                 />
               </FormField>
@@ -346,7 +393,7 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   type="text"
                   value={formData.taxNumber}
                   onChange={(e) => updateField('taxNumber', e.target.value)}
-                  placeholder="e.g. 300123456700003"
+                  placeholder="TAX-998877"
                   className="font-mono"
                 />
               </FormField>
@@ -363,7 +410,7 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label={t('field.branch_code')} hint={t('field.branch_code_hint')} required>
+              <FormField label={t('field.branch_code')} required>
                 <Input
                   type="text"
                   value={formData.branchCode}
@@ -374,18 +421,19 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                 />
               </FormField>
 
-              <FormField label={t('field.is_main_branch')}>
-                <div className="py-2 px-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-700">
-                  {language === 'ar' ? 'المقر التشغيلي الرئيسي (تلقائي)' : 'Primary Headquarters (Designated)'}
+              <div className="flex items-center pt-6">
+                <div className="flex items-center space-x-2 rtl:space-x-reverse text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2 w-full">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{language === 'ar' ? 'هذا الفرع سيكون المقر الرئيسي الافتراضي للمنشأة' : 'Designated as Primary Headquarters Branch / Main Campus'}</span>
                 </div>
-              </FormField>
+              </div>
 
               <FormField label={t('field.branch_name_en')} required>
                 <Input
                   type="text"
                   value={formData.branchNameEn}
                   onChange={(e) => updateField('branchNameEn', e.target.value)}
-                  placeholder="Head Office"
+                  placeholder="e.g. Headquarters / Main Campus"
                   required
                 />
               </FormField>
@@ -395,9 +443,7 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   type="text"
                   value={formData.branchNameAr}
                   onChange={(e) => updateField('branchNameAr', e.target.value)}
-                  placeholder="المقر الرئيسي"
-                  dir="rtl"
-                  className="font-arabic text-right"
+                  placeholder="مثال: المقر الرئيسي / الحرم الرئيسي"
                   required
                 />
               </FormField>
@@ -417,22 +463,27 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   value={formData.cityAr}
                   onChange={(e) => updateField('cityAr', e.target.value)}
                   placeholder="مدينة الكويت"
-                  dir="rtl"
-                  className="font-arabic text-right"
                 />
               </FormField>
 
-              <div className="md:col-span-2">
-                <FormField label={t('field.branch_phone')}>
-                  <Input
-                    type="text"
-                    value={formData.branchPhone}
-                    onChange={(e) => updateField('branchPhone', e.target.value)}
-                    placeholder="+965 2200 0000"
-                    className="font-mono"
-                  />
-                </FormField>
-              </div>
+              <FormField label={t('field.branch_address_en')}>
+                <Input
+                  type="text"
+                  value={formData.branchAddressEn}
+                  onChange={(e) => updateField('branchAddressEn', e.target.value)}
+                  placeholder="Tower 4, Floor 12, Financial District"
+                />
+              </FormField>
+
+              <FormField label={t('field.branch_phone')}>
+                <Input
+                  type="text"
+                  value={formData.branchPhone}
+                  onChange={(e) => updateField('branchPhone', e.target.value)}
+                  placeholder="+965 2200 0000"
+                  className="font-mono"
+                />
+              </FormField>
             </div>
           </div>
         )}
@@ -446,7 +497,7 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label={`${t('field.base_currency')} (ISO 4217)`} required>
+              <FormField label={t('field.base_currency')} required>
                 <Select
                   value={formData.baseCurrency}
                   onChange={(e) => updateField('baseCurrency', e.target.value)}
@@ -464,9 +515,9 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                   value={formData.fiscalYearStartMonth}
                   onChange={(e) => updateField('fiscalYearStartMonth', Number(e.target.value))}
                 >
-                  <option value={1}>January (Standard GCC Corporate Calendar)</option>
+                  <option value={1}>January (Standard Corporate Calendar)</option>
                   <option value={4}>April</option>
-                  <option value={7}>July</option>
+                  <option value={7}>July (Academic / Mid-Year Calendar)</option>
                   <option value={10}>October</option>
                 </Select>
               </FormField>
@@ -511,86 +562,134 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
           </div>
         )}
 
-        {/* STEP 4: Administrator Profile */}
+        {/* STEP 4: Super Administrator Profile */}
         {currentStep === 4 && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-base font-bold text-slate-900 mb-1">{t('wizard.step4.title')}</h2>
-              <p className="text-xs text-slate-500">{t('wizard.step4.desc')}</p>
+              <h2 className="text-base font-bold text-slate-900 mb-1">
+                {language === 'ar' ? 'إنشاء حساب المسؤول العام (Super Admin)' : 'Primary Super Administrator Account'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                {language === 'ar'
+                  ? 'سيتم منح هذا المستخدم أعلى صلاحيات إدارة النظام (Super Admin) لإدارة المنشأة والمستخدمين.'
+                  : 'This initial user will be established with Super Admin privileges to oversee all modules and configure security.'}
+              </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label={t('field.admin_name')} required>
+              <FormField label={language === 'ar' ? 'الاسم الكامل للمسؤول *' : 'Super Admin Full Name *'} required>
                 <Input
                   type="text"
                   value={formData.adminDisplayName}
                   onChange={(e) => updateField('adminDisplayName', e.target.value)}
-                  placeholder="Abdullah Al-Salem"
+                  placeholder="e.g. Master Administrator"
                   required
                 />
               </FormField>
 
-              <FormField label={t('field.admin_email')} required>
+              <FormField label={language === 'ar' ? 'البريد الإلكتروني للمسؤول *' : 'Administrator Email *'} required>
                 <Input
                   type="email"
                   value={formData.adminEmail}
                   onChange={(e) => updateField('adminEmail', e.target.value)}
-                  placeholder="admin@enterprise.com"
+                  placeholder="e.g. admin@institution.edu"
                   required
                 />
               </FormField>
 
-              <FormField label={language === 'ar' ? 'كلمة المرور المشفرة *' : 'Secure Administrator Password *'} required>
+              <FormField label={language === 'ar' ? 'اسم المستخدم للدخول *' : 'Login Username *'} required>
                 <Input
-                  type="password"
-                  value={formData.adminPassword}
-                  onChange={(e) => updateField('adminPassword', e.target.value)}
-                  placeholder="••••••••••••"
+                  type="text"
+                  value={formData.adminUsername}
+                  onChange={(e) => updateField('adminUsername', e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))}
+                  placeholder="e.g. superadmin"
+                  className="font-mono"
                   required
                 />
               </FormField>
 
-              <FormField label={language === 'ar' ? 'تأكيد كلمة المرور *' : 'Confirm Password *'} required>
+              <FormField label={language === 'ar' ? 'رقم الهاتف (اختياري)' : 'Contact Phone (Optional)'}>
                 <Input
-                  type="password"
-                  value={formData.adminPasswordConfirm}
-                  onChange={(e) => updateField('adminPasswordConfirm', e.target.value)}
-                  placeholder="••••••••••••"
-                  required
+                  type="text"
+                  value={formData.adminPhone}
+                  onChange={(e) => updateField('adminPhone', e.target.value)}
+                  placeholder="+965 9900 0000"
+                  className="font-mono"
                 />
               </FormField>
 
-              <FormField label={t('field.admin_role')}>
-                <div className="py-2 px-3 bg-slate-50 border border-slate-200 rounded text-xs font-mono text-slate-700">
-                  COMPANY_ADMIN
+              <FormField label={language === 'ar' ? 'كلمة المرور المشفرة * (8 خانات كحد أدنى)' : 'Secure Password * (Min 8 characters)'} required>
+                <div className="relative">
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    value={formData.adminPassword}
+                    onChange={(e) => updateField('adminPassword', e.target.value)}
+                    placeholder="••••••••••••"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-2 rtl:right-auto rtl:left-2 flex items-center px-2 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </FormField>
 
-              <FormField label={t('field.admin_uid')}>
-                <Input
-                  type="text"
-                  value={formData.adminUid}
-                  readOnly
-                  className="font-mono bg-slate-50 text-slate-500"
-                />
+              <FormField label={language === 'ar' ? 'تأكيد كلمة المرور *' : 'Confirm Password *'} required>
+                <div className="relative">
+                  <Input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={formData.adminPasswordConfirm}
+                    onChange={(e) => updateField('adminPasswordConfirm', e.target.value)}
+                    placeholder="••••••••••••"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute inset-y-0 right-2 rtl:right-auto rtl:left-2 flex items-center px-2 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </FormField>
+
+              <div className="col-span-1 md:col-span-2 p-3 bg-amber-50/80 border border-amber-200 rounded-lg flex items-center gap-3">
+                <ShieldCheck className="w-5 h-5 text-amber-600 shrink-0" />
+                <div className="text-xs text-amber-900">
+                  <span className="font-bold block">
+                    {language === 'ar' ? 'صلاحيات المسؤول العام (SUPER_ADMIN):' : 'Assigned Role: SUPER_ADMIN'}
+                  </span>
+                  <span className="text-amber-800 text-[11px]">
+                    {language === 'ar'
+                      ? 'يتمتع بكامل الصلاحيات الإدارية والمالية والأمنية وإدارة كافة فروع ومستخدمي النظام.'
+                      : 'Full administrative access across organization, modules, user provisioning, and statutory compliance.'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* STEP 5: Review & Establishment */}
+        {/* STEP 5: Review & Confirmation */}
         {currentStep === 5 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-base font-bold text-slate-900 mb-1">{t('wizard.step5.title')}</h2>
-              <p className="text-xs text-slate-500">{t('wizard.step5.desc')}</p>
+              <p className="text-xs text-slate-500">
+                {language === 'ar'
+                  ? 'يرجى مراجعة كافة بيانات المنشأة وحساب المسؤول قبل إتمام التأسيس النهائي.'
+                  : 'Please review all entity specifications and administrator credentials before final initialization.'}
+              </p>
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-5 space-y-4 text-xs">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pb-4 border-b border-slate-200">
                 <div>
                   <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.company_code')}</span>
-                  <span className="font-mono font-bold text-slate-900">{formData.code}</span>
+                  <span className="font-mono font-bold text-slate-900">{formData.code || 'N/A'}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.country')}</span>
@@ -600,86 +699,89 @@ export function FirstRunWizard({ onCompanyCreated }: FirstRunWizardProps) {
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.base_currency')}</span>
-                  <span className="font-mono font-bold text-slate-900">{formData.baseCurrency}</span>
+                  <span className="font-mono font-bold text-amber-600">{formData.baseCurrency}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 border-b border-slate-200">
                 <div>
                   <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.legal_name_en')}</span>
-                  <span className="font-medium text-slate-900">{formData.legalNameEn}</span>
+                  <span className="font-medium text-slate-800">{formData.legalNameEn || 'N/A'}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.legal_name_ar')}</span>
-                  <span className="font-arabic font-medium text-slate-900">{formData.legalNameAr}</span>
+                  <span className="font-medium text-slate-800">{formData.legalNameAr || 'N/A'}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pb-4 border-b border-slate-200">
                 <div>
-                  <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.cr_number')}</span>
-                  <span className="font-mono text-slate-800">{formData.crNumber || '—'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.tax_number')}</span>
-                  <span className="font-mono text-slate-800">{formData.taxNumber || '—'}</span>
-                </div>
-                <div>
                   <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.branch_code')}</span>
-                  <span className="font-mono font-semibold text-slate-800">{formData.branchCode} ({formData.branchNameEn})</span>
+                  <span className="font-mono font-bold text-slate-900">{formData.branchCode || 'HQ'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px] mb-0.5">{language === 'ar' ? 'اسم المقر الرئيسي' : 'Headquarters Branch'}</span>
+                  <span className="font-medium text-slate-800">{formData.branchNameEn || 'Main Campus'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.timezone')}</span>
+                  <span className="font-mono text-slate-700">{formData.timezone}</span>
                 </div>
               </div>
 
-              <div>
-                <span className="text-slate-400 block text-[11px] mb-0.5">{t('field.admin_name')}</span>
-                <span className="font-medium text-slate-900">{formData.adminDisplayName} ({formData.adminEmail})</span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1 bg-white p-3 rounded border border-slate-200">
+                <div>
+                  <span className="text-slate-400 block text-[11px] mb-0.5">{language === 'ar' ? 'المسؤول العام' : 'Super Admin'}</span>
+                  <span className="font-bold text-slate-900">{formData.adminDisplayName || 'Administrator'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px] mb-0.5">Email</span>
+                  <span className="font-mono text-slate-800">{formData.adminEmail || 'N/A'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px] mb-0.5">Username</span>
+                  <span className="font-mono font-bold text-amber-700">{formData.adminUsername || 'superadmin'}</span>
+                </div>
               </div>
             </div>
-
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Submitting establishes the legal entity, assigns the primary headquarters branch, and creates an immutable initial audit entry.
-            </p>
           </div>
         )}
 
-        {/* Wizard Action Controls */}
+        {/* Wizard Action Footer Bar */}
         <div className="mt-8 pt-5 border-t border-slate-200 flex items-center justify-between">
           <div>
             {currentStep > 1 && (
               <Button
                 variant="secondary"
-                size="sm"
+                size="md"
                 onClick={handlePrevious}
+                leftIcon={<PrevIcon className="w-4 h-4" />}
                 disabled={isSubmitting}
-                leftIcon={<PrevIcon className="w-3.5 h-3.5" />}
               >
                 {t('action.previous')}
               </Button>
             )}
           </div>
 
-          <div>
+          <div className="flex items-center space-x-3 rtl:space-x-reverse">
             {currentStep < 5 ? (
               <Button
                 variant="primary"
-                size="sm"
+                size="md"
                 onClick={handleNext}
-                rightIcon={<NextIcon className="w-3.5 h-3.5" />}
+                rightIcon={<NextIcon className="w-4 h-4" />}
               >
                 {t('action.next')}
               </Button>
             ) : (
               <Button
                 variant="primary"
-                size="sm"
+                size="md"
                 onClick={handleSubmit}
                 isLoading={isSubmitting}
-                disabled={isSubmitting}
                 leftIcon={<ShieldCheck className="w-4 h-4" />}
               >
-                {isSubmitting
-                  ? (language === 'ar' ? 'جاري تأسيس المنشأة...' : 'Establishing Enterprise...')
-                  : t('action.complete_setup')}
+                {language === 'ar' ? 'تأسيس المنشأة وبدء العمل' : 'Establish Institution & Launch ERP'}
               </Button>
             )}
           </div>

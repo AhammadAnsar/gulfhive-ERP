@@ -6,7 +6,22 @@
 import crypto from 'crypto';
 import { eq, desc, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.ts';
-import { tenants, branches, users, userTenants, userSessions, roles, permissions, rolePermissions, auditLogs, documentSequences } from '../../../db/schema.ts';
+import {
+  tenants,
+  branches,
+  users,
+  userTenants,
+  userRoles,
+  userCompanyAccess,
+  userBranchAccess,
+  userDataScopes,
+  userSessions,
+  roles,
+  permissions,
+  rolePermissions,
+  auditLogs,
+  documentSequences,
+} from '../../../db/schema.ts';
 import { logger } from '../../../core/logging/logger.ts';
 import { authRepository } from './auth.repository.ts';
 
@@ -41,7 +56,9 @@ export interface CreateCompanyInput {
   // Administrator
   adminUid: string;
   adminEmail: string;
+  adminUsername?: string;
   adminDisplayName?: string;
+  adminPhone?: string;
   adminPassword?: string;
 }
 
@@ -214,41 +231,98 @@ export class CompanyRepository {
 
       // 4. Ensure Admin User exists in users table with secure password if provided
       const passwordHash = input.adminPassword ? authRepository.hashPassword(input.adminPassword) : null;
+      const cleanEmail = input.adminEmail.toLowerCase().trim();
+      const cleanUsername = input.adminUsername ? input.adminUsername.trim().toLowerCase() : cleanEmail.split('@')[0];
+
       const upsertedUsers = await tx.insert(users).values({
         uid: input.adminUid,
-        email: input.adminEmail.toLowerCase().trim(),
+        email: cleanEmail,
+        username: cleanUsername,
         displayName: input.adminDisplayName || 'System Administrator',
-        role: 'COMPANY_ADMIN',
+        phone: input.adminPhone?.trim() || null,
+        role: 'SUPER_ADMIN',
         tenantId: tenant.id,
+        defaultBranchId: branch.id,
         passwordHash,
+        status: 'ACTIVE',
+        isActive: true,
+        mustChangePassword: false,
+        failedLoginAttempts: 0,
       }).onConflictDoUpdate({
         target: users.uid,
         set: {
-          email: input.adminEmail.toLowerCase().trim(),
+          email: cleanEmail,
+          username: cleanUsername,
           displayName: input.adminDisplayName || undefined,
-          role: 'COMPANY_ADMIN',
+          phone: input.adminPhone?.trim() || undefined,
+          role: 'SUPER_ADMIN',
           tenantId: tenant.id,
+          defaultBranchId: branch.id,
           passwordHash: passwordHash || undefined,
+          status: 'ACTIVE',
+          isActive: true,
+          mustChangePassword: false,
+          failedLoginAttempts: 0,
           updatedAt: new Date(),
         },
       }).returning();
 
       const user = upsertedUsers[0];
 
-      // 5. Connect user to user_tenants with COMPANY_ADMIN role and main branch
+      // 5. Connect user to RBAC tables: userRoles, userCompanyAccess, userBranchAccess, userDataScopes, and userTenants
+      // 5a. Assign SUPER_ADMIN and COMPANY_ADMIN system roles
+      await tx.insert(userRoles).values([
+        {
+          userId: user.id,
+          roleId: 'role_super_admin',
+          tenantId: tenant.id,
+        },
+        {
+          userId: user.id,
+          roleId: 'role_company_admin',
+          tenantId: tenant.id,
+        },
+      ]).onConflictDoNothing();
+
+      // 5b. Authorize company access
+      await tx.insert(userCompanyAccess).values({
+        userId: user.id,
+        companyId: tenant.id,
+        isDefault: true,
+        status: 'ACTIVE',
+        createdBy: input.adminUid || 'system',
+      });
+
+      // 5c. Authorize branch access
+      await tx.insert(userBranchAccess).values({
+        userId: user.id,
+        companyId: tenant.id,
+        branchId: branch.id,
+        createdBy: input.adminUid || 'system',
+      });
+
+      // 5d. Data scopes
+      await tx.insert(userDataScopes).values({
+        userId: user.id,
+        companyId: tenant.id,
+        module: 'ALL',
+        scope: 'ALL_COMPANIES',
+      });
+
+      // 5e. Legacy user_tenants table compatibility
       const assignmentId = `ut_${user.id}_${tenant.id}`;
       await tx.insert(userTenants).values({
         id: assignmentId,
         userId: user.id,
         tenantId: tenant.id,
-        roleId: 'role_company_admin',
+        roleId: 'role_super_admin',
         defaultBranchId: branch.id,
         isDefault: true,
         isActive: true,
       }).onConflictDoUpdate({
         target: userTenants.id,
         set: {
-          roleId: 'role_company_admin',
+          roleId: 'role_super_admin',
           defaultBranchId: branch.id,
           isActive: true,
         },
@@ -324,10 +398,28 @@ export class CompanyRepository {
 
       logger.audit('CREATE', 'COMPANY', tenant.id, { code: tenant.code }, { tenantId: tenant.id });
 
+      const allPerms = await tx.select({ code: permissions.code }).from(permissions);
+      const permissionCodes = allPerms.map((p) => p.code);
+
+      const authCtx = {
+        userId: user.id,
+        id: user.id,
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName,
+        activeCompanyId: tenant.id,
+        activeBranchId: branch.id,
+        roles: ['SUPER_ADMIN', 'COMPANY_ADMIN'],
+        permissions: permissionCodes,
+        dataScopes: { ALL: 'ALL_COMPANIES' },
+        authorizedCompanyIds: [tenant.id],
+        authorizedBranchIds: [branch.id],
+      };
+
       return {
         tenant,
         branch,
-        user,
+        user: authCtx,
         token,
       };
     });

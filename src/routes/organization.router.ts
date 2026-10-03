@@ -86,7 +86,10 @@ organizationRouter.post(['/setup/company', '/setup/establish'], async (req: Requ
       branchPhone,
       adminUid,
       adminEmail,
+      adminUsername,
       adminDisplayName,
+      adminPhone,
+      adminPassword,
     } = req.body;
 
     if (!code || !legalNameEn || !legalNameAr || !countryCode || !baseCurrency) {
@@ -130,8 +133,10 @@ organizationRouter.post(['/setup/company', '/setup/establish'], async (req: Requ
       branchPhone,
       adminUid: effectiveAdminUid,
       adminEmail,
+      adminUsername,
       adminDisplayName,
-      adminPassword: req.body.adminPassword,
+      adminPhone,
+      adminPassword,
     });
 
     res.status(201).json({
