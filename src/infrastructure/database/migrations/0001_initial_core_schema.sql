@@ -15,6 +15,24 @@ CREATE TABLE IF NOT EXISTS tenants (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS branches (
+  id VARCHAR(64) PRIMARY KEY,
+  tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code VARCHAR(32) NOT NULL,
+  name_en TEXT NOT NULL,
+  name_ar TEXT NOT NULL,
+  is_main BOOLEAN NOT NULL DEFAULT false,
+  city_en TEXT,
+  city_ar TEXT,
+  address_en TEXT,
+  address_ar TEXT,
+  phone VARCHAR(32),
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+  CONSTRAINT uk_branches_tenant_code UNIQUE (tenant_id, code)
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   uid TEXT NOT NULL UNIQUE,
