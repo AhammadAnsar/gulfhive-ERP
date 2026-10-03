@@ -1,6 +1,6 @@
 # GulfHive ERP — API Security Authorization Matrix
 
-Generated Automatically: 2026-10-03T03:19:23.858Z
+Generated Automatically: 2026-10-03T05:01:26.713Z
 Release Verification Gate: PASS
 
 | Endpoint Route | HTTP Method | Bounded-Context Module | Required Permission | No Auth Check | Cross-Tenant Block | RBAC Validation |

@@ -234,40 +234,50 @@ export class CompanyRepository {
       const cleanEmail = input.adminEmail.toLowerCase().trim();
       const cleanUsername = input.adminUsername ? input.adminUsername.trim().toLowerCase() : cleanEmail.split('@')[0];
 
-      const upsertedUsers = await tx.insert(users).values({
-        uid: input.adminUid,
-        email: cleanEmail,
-        username: cleanUsername,
-        displayName: input.adminDisplayName || 'System Administrator',
-        phone: input.adminPhone?.trim() || null,
-        role: 'SUPER_ADMIN',
-        tenantId: tenant.id,
-        defaultBranchId: branch.id,
-        passwordHash,
-        status: 'ACTIVE',
-        isActive: true,
-        mustChangePassword: false,
-        failedLoginAttempts: 0,
-      }).onConflictDoUpdate({
-        target: users.uid,
-        set: {
+      // Safe user lookup by UID, Email or Username
+      const existingUsers = await tx.select().from(users).where(
+        sql`${users.uid} = ${input.adminUid} OR LOWER(${users.email}) = ${cleanEmail} OR LOWER(${users.username}) = ${cleanUsername}`
+      ).limit(1);
+
+      let user: typeof users.$inferSelect;
+
+      if (existingUsers.length > 0) {
+        user = existingUsers[0];
+        const [updatedUser] = await tx.update(users).set({
+          uid: input.adminUid,
           email: cleanEmail,
           username: cleanUsername,
-          displayName: input.adminDisplayName || undefined,
-          phone: input.adminPhone?.trim() || undefined,
+          displayName: input.adminDisplayName || user.displayName || 'System Administrator',
+          phone: input.adminPhone?.trim() || user.phone,
           role: 'SUPER_ADMIN',
           tenantId: tenant.id,
           defaultBranchId: branch.id,
-          passwordHash: passwordHash || undefined,
+          passwordHash: passwordHash || user.passwordHash,
           status: 'ACTIVE',
           isActive: true,
           mustChangePassword: false,
           failedLoginAttempts: 0,
           updatedAt: new Date(),
-        },
-      }).returning();
-
-      const user = upsertedUsers[0];
+        }).where(eq(users.id, user.id)).returning();
+        user = updatedUser;
+      } else {
+        const [insertedUser] = await tx.insert(users).values({
+          uid: input.adminUid,
+          email: cleanEmail,
+          username: cleanUsername,
+          displayName: input.adminDisplayName || 'System Administrator',
+          phone: input.adminPhone?.trim() || null,
+          role: 'SUPER_ADMIN',
+          tenantId: tenant.id,
+          defaultBranchId: branch.id,
+          passwordHash,
+          status: 'ACTIVE',
+          isActive: true,
+          mustChangePassword: false,
+          failedLoginAttempts: 0,
+        }).returning();
+        user = insertedUser;
+      }
 
       // 5. Connect user to RBAC tables: userRoles, userCompanyAccess, userBranchAccess, userDataScopes, and userTenants
       // 5a. Assign SUPER_ADMIN and COMPANY_ADMIN system roles
@@ -291,7 +301,7 @@ export class CompanyRepository {
         isDefault: true,
         status: 'ACTIVE',
         createdBy: input.adminUid || 'system',
-      });
+      }).onConflictDoNothing();
 
       // 5c. Authorize branch access
       await tx.insert(userBranchAccess).values({
@@ -299,7 +309,7 @@ export class CompanyRepository {
         companyId: tenant.id,
         branchId: branch.id,
         createdBy: input.adminUid || 'system',
-      });
+      }).onConflictDoNothing();
 
       // 5d. Data scopes
       await tx.insert(userDataScopes).values({
@@ -307,7 +317,7 @@ export class CompanyRepository {
         companyId: tenant.id,
         module: 'ALL',
         scope: 'ALL_COMPANIES',
-      });
+      }).onConflictDoNothing();
 
       // 5e. Legacy user_tenants table compatibility
       const assignmentId = `ut_${user.id}_${tenant.id}`;
